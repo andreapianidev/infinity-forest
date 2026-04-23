@@ -7,7 +7,7 @@
 
 > **Un'esperienza immersiva in prima persona attraverso una foresta infinita, generata proceduralmente. Ogni visita è un mondo unico!**
 
-🎮 **[Prova la Demo Live](https://infinite-forest-demo.vercel.app)** (se deployato)
+🎮 **[Entra nella Foresta](https://infinity-forest.vercel.app)** — Esplora ora!
 
 ---
 
