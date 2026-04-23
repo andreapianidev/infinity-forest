@@ -169,6 +169,7 @@ export function HUD({ locked }: { locked: boolean }) {
   const devNPC = useNPC((s) => s.devNPC);
 
   const [toast, setToast] = useState<string | null>(null);
+  const [statsExpanded, setStatsExpanded] = useState(false);
   const onScreenshot = () => {
     takeScreenshot((name) => {
       setToast(`Saved ${name}`);
@@ -208,23 +209,75 @@ export function HUD({ locked }: { locked: boolean }) {
               ))}
             </ul>
           </div>
-          <div className="panel world-info">
-            <div className="clock">{fmtTime(hour)} · {PHASE_LABEL[phase] ?? phase}</div>
-            <div className="season">{effectiveSeason.charAt(0).toUpperCase() + effectiveSeason.slice(1)}</div>
-            <div className="altitude">⛰️ {altitude.toFixed(1)}m</div>
-            <div className="temperature">🌡️ {temperature.toFixed(1)}°C</div>
-            <div className="moon">{getMoonIcon(moonPhase)} {['New','Waxing','Quarter','Gibbous','Full','Waning','Last','Crescent'][moonPhase]}</div>
-            
-            {/* Exploration Stats */}
-            <div className="exploration-stats" style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px solid rgba(0,0,0,0.1)' }}>
-              <div>🚶 {fmtDistance(distanceTraveled)} · ⚡ {fmtSpeed(playerSpeed)}</div>
-              <div style={{ fontSize: '0.85em', opacity: 0.8 }}>🧭 {facing} · 📍 {Math.round(posX)},{Math.round(posZ)}</div>
+          <div className="panel world-info stats-panel">
+            {/* Compact View - Always Visible */}
+            <div className="stats-compact">
+              <div className="clock">{fmtTime(hour)} · {PHASE_LABEL[phase] ?? phase}</div>
+              <div className="season">{effectiveSeason.charAt(0).toUpperCase() + effectiveSeason.slice(1)} · ⛰️ {altitude.toFixed(0)}m · 🌡️ {temperature.toFixed(0)}°C</div>
+              <div style={{ display: 'flex', gap: '12px', fontSize: '0.85em', opacity: 0.9 }}>
+                <span>🚶 {fmtDistance(distanceTraveled)}</span>
+                <span>⚡ {fmtSpeed(playerSpeed)}</span>
+                <span>🧭 {facing}</span>
+              </div>
             </div>
             
-            {/* Progress Stats */}
-            <div className="progress-stats" style={{ marginTop: '6px', fontSize: '0.85em', opacity: 0.8 }}>
-              ⏱️ {fmtDuration(sessionTime)} · 🌿 {plantsCollected} piante
-            </div>
+            {/* Toggle Button */}
+            <button 
+              className="stats-toggle"
+              onClick={() => setStatsExpanded(!statsExpanded)}
+              style={{
+                width: '100%',
+                marginTop: '6px',
+                padding: '4px 8px',
+                fontSize: '0.75em',
+                background: 'rgba(0,0,0,0.05)',
+                border: 'none',
+                borderRadius: '4px',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '4px'
+              }}
+            >
+              {statsExpanded ? '▲ Less' : '▼ More'}
+            </button>
+            
+            {/* Expanded View - Detailed Stats */}
+            {statsExpanded && (
+              <div className="stats-expanded" style={{ marginTop: '10px', paddingTop: '10px', borderTop: '1px solid rgba(0,0,0,0.1)' }}>
+                {/* Environmental Section */}
+                <div className="stats-section" style={{ marginBottom: '8px' }}>
+                  <div style={{ fontSize: '0.75em', opacity: 0.6, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Environment</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px', fontSize: '0.85em' }}>
+                    <div>🌡️ {temperature.toFixed(1)}°C</div>
+                    <div>{getMoonIcon(moonPhase)} {['New','Waxing Crescent','First Quarter','Waxing Gibbous','Full','Waning Gibbous','Last Quarter','Waning Crescent'][moonPhase]}</div>
+                    <div>☁️ {WEATHER_LABEL[weather]}</div>
+                    <div>⛰️ {altitude.toFixed(1)}m</div>
+                  </div>
+                </div>
+                
+                {/* Exploration Section */}
+                <div className="stats-section" style={{ marginBottom: '8px' }}>
+                  <div style={{ fontSize: '0.75em', opacity: 0.6, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Exploration</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px', fontSize: '0.85em' }}>
+                    <div>🚶 {fmtDistance(distanceTraveled)}</div>
+                    <div>⚡ {fmtSpeed(playerSpeed)}</div>
+                    <div>🧭 {facing}</div>
+                    <div>📍 {Math.round(posX)}, {Math.round(posZ)}</div>
+                  </div>
+                </div>
+                
+                {/* Progress Section */}
+                <div className="stats-section">
+                  <div style={{ fontSize: '0.75em', opacity: 0.6, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Session</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px', fontSize: '0.85em' }}>
+                    <div>⏱️ {fmtDuration(sessionTime)}</div>
+                    <div>🌿 {plantsCollected} raccolte</div>
+                  </div>
+                </div>
+              </div>
+            )}
             
             {realtimeClock && (() => {
               const sunset = getLocalSunsetTime();
