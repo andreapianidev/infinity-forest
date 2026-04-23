@@ -12,7 +12,7 @@ import { world, WATER_LEVEL, nearWater, Season } from '@/lib/world';
 
 // Seasonal terrain colors - distinct palettes for each season
 const SEASONAL_TERRAIN_COLORS: Record<Season, { grassA: string; grassB: string; grassDry: string; dirt: string; sand: string; rock: string }> = {
-  spring: { grassA: '#6abf4a', grassB: '#4a8f32', grassDry: '#8ac460', dirt: '#6a5a38', sand: '#d4c890', rock: '#7a7a72' },
+  spring: { grassA: '#7acf5a', grassB: '#5abf42', grassDry: '#9ad470', dirt: '#6a5a38', sand: '#d4c890', rock: '#7a7a72' },
   summer: { grassA: '#5a9f30', grassB: '#3a6f20', grassDry: '#a0a840', dirt: '#5a4a28', sand: '#c9b882', rock: '#72726a' },
   autumn: { grassA: '#8a9a3a', grassB: '#6a5a28', grassDry: '#c8a040', dirt: '#5a4a2a', sand: '#c4b078', rock: '#7a726a' },
   winter: { grassA: '#4a5a40', grassB: '#3a4a35', grassDry: '#5a6a50', dirt: '#4a5045', sand: '#b8c0c0', rock: '#6a7068' },
@@ -509,8 +509,8 @@ const AUTUMN_COLOR_VARIATIONS = {
 
 // Seasonal foliage colors - each tree type has variants for each season
 const SEASONAL_FOLIAGE_COLORS: Record<Season, { conifer: string; broadleaf: string; birch: string; oak: string; maple: string }> = {
-  // Spring: bright fresh greens, light birch yellows, fresh oak
-  spring: { conifer: '#2d7a3a', broadleaf: '#6aba40', birch: '#a0d070', oak: '#5a8a38', maple: '#d09040' },
+  // Spring: vibrant fresh greens with yellow undertones, flowering colors
+  spring: { conifer: '#3d9a4a', broadleaf: '#7aca50', birch: '#b0e080', oak: '#6aaa48', maple: '#e0a858' },
   // Summer: deep rich greens
   summer: { conifer: '#1e5a25', broadleaf: '#4a8a28', birch: '#7ab050', oak: '#3d6a28', maple: '#a06020' },
   // Autumn: warm oranges, reds, golden yellows - base colors, actual varies per tree
@@ -622,7 +622,7 @@ const stumpTopMat = new THREE.MeshStandardMaterial({ color: '#a08868', roughness
 
 // Seasonal undergrowth colors (grass, bushes, ferns)
 const SEASONAL_UNDERGROWTH: Record<Season, { grassBase: string; grassLight: string; grassDark: string; grassGolden: string; bush: string; berry: string; fern: string }> = {
-  spring: { grassBase: '#7abf4a', grassLight: '#9adf70', grassDark: '#5a9f30', grassGolden: '#b0c858', bush: '#4a8a3a', berry: '#5a9a42', fern: '#4a9a50' },
+  spring: { grassBase: '#8acf5a', grassLight: '#aef080', grassDark: '#6abf40', grassGolden: '#c0d868', bush: '#5aaa4a', berry: '#6aba52', fern: '#5aba60' },
   summer: { grassBase: '#5a9f30', grassLight: '#7abf50', grassDark: '#3d7f20', grassGolden: '#a0a848', bush: '#2d5a25', berry: '#3d6a32', fern: '#2d6a35' },
   autumn: { grassBase: '#8a9a3a', grassLight: '#aaba58', grassDark: '#6a7a28', grassGolden: '#c8a030', bush: '#5a4a25', berry: '#6a5a35', fern: '#4a5a30' },
   winter: { grassBase: '#4a5a40', grassLight: '#5a6a50', grassDark: '#3a4a35', grassGolden: '#5a6a48', bush: '#3a4a35', berry: '#4a5a42', fern: '#3a4a40' },
@@ -1038,15 +1038,17 @@ function grassPlacements(cx: number, cz: number): { x: number; z: number; y: num
  * Each item carries a `colorIdx` into WILDFLOWER_PALETTE so meadows read
  * as multi-coloured fields, not monochrome swatches.
  */
-function wildflowerPlacements(cx: number, cz: number): {
+function wildflowerPlacements(cx: number, cz: number, isSpring = false): {
   x: number; z: number; y: number; scale: number; rot: number; colorIdx: number;
 }[] {
   const out: { x: number; z: number; y: number; scale: number; rot: number; colorIdx: number }[] = [];
   const N = 18;
+  // More flowers in spring
+  const densityThreshold = isSpring ? 0.22 : 0.35;
   for (let i = 0; i < N * N; i++) {
     const gx = i % N, gz = Math.floor(i / N);
     const r = hash2(cx * N + gx, cz * N + gz, 311);
-    if (r > 0.35) continue;
+    if (r > densityThreshold) continue;
     const jx = hash2(cx * N + gx, cz * N + gz, 313);
     const jz = hash2(cx * N + gx, cz * N + gz, 317);
     const x = cx * CHUNK_SIZE + (gx + jx) * (CHUNK_SIZE / N);
@@ -1065,15 +1067,17 @@ function wildflowerPlacements(cx: number, cz: number): {
 // ─────────── New diverse flower placements ───────────
 
 /** Bell flowers (bluebells) — prefer shadier spots, taller grass areas */
-function bellFlowerPlacements(cx: number, cz: number): {
+function bellFlowerPlacements(cx: number, cz: number, isSpring = false): {
   x: number; z: number; y: number; scale: number; rot: number; colorIdx: number;
 }[] {
   const out: { x: number; z: number; y: number; scale: number; rot: number; colorIdx: number }[] = [];
   const N = 14;
+  // More bell flowers in spring
+  const densityThreshold = isSpring ? 0.4 : 0.55;
   for (let i = 0; i < N * N; i++) {
     const gx = i % N, gz = Math.floor(i / N);
     const r = hash2(cx * N + gx, cz * N + gz, 411);
-    if (r > 0.55) continue; // sparser than wildflowers
+    if (r > densityThreshold) continue; // sparser than wildflowers
     const jx = hash2(cx * N + gx, cz * N + gz, 413);
     const jz = hash2(cx * N + gx, cz * N + gz, 417);
     const x = cx * CHUNK_SIZE + (gx + jx) * (CHUNK_SIZE / N);
@@ -1091,15 +1095,17 @@ function bellFlowerPlacements(cx: number, cz: number): {
 }
 
 /** Tall flowers (daisies, sunflowers) — stand above the grass */
-function tallFlowerPlacements(cx: number, cz: number): {
+function tallFlowerPlacements(cx: number, cz: number, isSpring = false): {
   x: number; z: number; y: number; scale: number; rot: number; colorIdx: number;
 }[] {
   const out: { x: number; z: number; y: number; scale: number; rot: number; colorIdx: number }[] = [];
   const N = 12;
+  // More tall flowers in spring
+  const densityThreshold = isSpring ? 0.3 : 0.45;
   for (let i = 0; i < N * N; i++) {
     const gx = i % N, gz = Math.floor(i / N);
     const r = hash2(cx * N + gx, cz * N + gz, 511);
-    if (r > 0.45) continue;
+    if (r > densityThreshold) continue;
     const jx = hash2(cx * N + gx, cz * N + gz, 513);
     const jz = hash2(cx * N + gx, cz * N + gz, 517);
     const x = cx * CHUNK_SIZE + (gx + jx) * (CHUNK_SIZE / N);
@@ -1209,6 +1215,32 @@ function pebblePlacements(cx: number, cz: number): {
     const scale = 0.5 + hash2(cx * N + gx, cz * N + gz, 339) * 1.4;
     const rot = hash2(cx * N + gx, cz * N + gz, 341) * Math.PI * 2;
     out.push({ x, z, y, scale, rot });
+  }
+  return out;
+}
+
+/** Cherry blossom petals falling/ground - only visible in spring */
+function cherryBlossomPlacements(cx: number, cz: number): { x: number; z: number; y: number; scale: number; rot: number; colorIdx: number }[] {
+  const out: { x: number; z: number; y: number; scale: number; rot: number; colorIdx: number }[] = [];
+  // Dense petal coverage in spring
+  const N = 16;
+  for (let i = 0; i < N * N; i++) {
+    const gx = i % N, gz = Math.floor(i / N);
+    const r = hash2(cx * N + gx, cz * N + gz, 501);
+    // 50% chance for a petal patch under flowering trees
+    if (r > 0.5) continue;
+    const jx = hash2(cx * N + gx, cz * N + gz, 503);
+    const jz = hash2(cx * N + gx, cz * N + gz, 507);
+    const x = cx * CHUNK_SIZE + (gx + jx) * (CHUNK_SIZE / N);
+    const z = cz * CHUNK_SIZE + (gz + jz) * (CHUNK_SIZE / N);
+    const y = sampledHeight(x, z);
+    // Only on dry ground, near trees (lower elevations)
+    if (y < WATER_LEVEL + 0.2 || y > 5) continue;
+    const scale = 0.5 + hash2(cx * N + gx, cz * N + gz, 509) * 0.6;
+    const rot = hash2(cx * N + gx, cz * N + gz, 511) * Math.PI * 2;
+    // Pink and white petal colors
+    const colorIdx = Math.floor(hash2(cx * N + gx, cz * N + gz, 513) * 3);
+    out.push({ x, z, y: y + 0.02, scale, rot, colorIdx });
   }
   return out;
 }
@@ -1564,15 +1596,17 @@ export function Chunk({ cx, cz, playerRef }: { cx: number; cz: number; playerRef
   const bushes = useMemo(() => bushPlacements(cx, cz), [cx, cz]);
   const grass = useMemo(() => grassPlacements(cx, cz), [cx, cz]);
   const reeds = useMemo(() => reedPlacements(cx, cz), [cx, cz]);
-  const wildflowers = useMemo(() => wildflowerPlacements(cx, cz), [cx, cz]);
-  // New diverse vegetation
-  const bellFlowers = useMemo(() => bellFlowerPlacements(cx, cz), [cx, cz]);
-  const tallFlowers = useMemo(() => tallFlowerPlacements(cx, cz), [cx, cz]);
+  const isSpring = world.season === 'spring';
+  const wildflowers = useMemo(() => wildflowerPlacements(cx, cz, isSpring), [cx, cz, isSpring]);
+  // New diverse vegetation - more flowers in spring
+  const bellFlowers = useMemo(() => bellFlowerPlacements(cx, cz, isSpring), [cx, cz, isSpring]);
+  const tallFlowers = useMemo(() => tallFlowerPlacements(cx, cz, isSpring), [cx, cz, isSpring]);
   const lavenders = useMemo(() => lavenderPlacements(cx, cz), [cx, cz]);
   const clovers = useMemo(() => cloverPlacements(cx, cz), [cx, cz]);
   const ferns = useMemo(() => fernPlacements(cx, cz), [cx, cz]);
   const pebbles = useMemo(() => pebblePlacements(cx, cz), [cx, cz]);
   const fallenLeaves = useMemo(() => fallenLeafPlacements(cx, cz), [cx, cz]);
+  const cherryBlossoms = useMemo(() => isSpring ? cherryBlossomPlacements(cx, cz) : [], [cx, cz, isSpring]);
   const plants = useMemo(() => plantsForChunk(cx, cz), [cx, cz]);
 
   const coniferTrunkRef = useRef<THREE.InstancedMesh>(null);
@@ -1602,6 +1636,7 @@ export function Chunk({ cx, cz, playerRef }: { cx: number; cz: number; playerRef
   const fernRef = useRef<THREE.InstancedMesh>(null);
   const pebbleRef = useRef<THREE.InstancedMesh>(null);
   const fallenLeafRef = useRef<THREE.InstancedMesh>(null);
+  const cherryBlossomRef = useRef<THREE.InstancedMesh>(null);
 
   // Fill all instanced meshes
   useEffect(() => {
@@ -1691,6 +1726,7 @@ export function Chunk({ cx, cz, playerRef }: { cx: number; cz: number; playerRef
     fill(ferns, fernRef.current);
     fill(pebbles, pebbleRef.current);
     fill(fallenLeaves, fallenLeafRef.current);
+    fill(cherryBlossoms, cherryBlossomRef.current);
     // Apply per-instance tint to flowers so each one takes a palette colour.
     if (wildflowerRef.current) {
       for (let i = 0; i < wildflowers.length; i++) {
@@ -1722,7 +1758,20 @@ export function Chunk({ cx, cz, playerRef }: { cx: number; cz: number; playerRef
       }
       if (fallenLeafRef.current.instanceColor) fallenLeafRef.current.instanceColor.needsUpdate = true;
     }
-  }, [coniferTrees, broadTrees, birchTrees, oakTrees, mapleTrees, bareBoulders, mossyBoulders, logs, stumps, grass, reeds, wildflowers, bellFlowers, tallFlowers, lavenders, clovers, ferns, pebbles, fallenLeaves, world.season]);
+    // Apply cherry blossom colors (pink/white)
+    if (cherryBlossomRef.current) {
+      const BLOSSOM_COLORS = [
+        new THREE.Color('#ffd0e0'), // light pink
+        new THREE.Color('#ffb0c8'), // medium pink
+        new THREE.Color('#fff0f5'), // white-pink
+      ];
+      for (let i = 0; i < cherryBlossoms.length; i++) {
+        const c = BLOSSOM_COLORS[cherryBlossoms[i].colorIdx % BLOSSOM_COLORS.length] ?? BLOSSOM_COLORS[0];
+        cherryBlossomRef.current.setColorAt(i, c);
+      }
+      if (cherryBlossomRef.current.instanceColor) cherryBlossomRef.current.instanceColor.needsUpdate = true;
+    }
+  }, [coniferTrees, broadTrees, birchTrees, oakTrees, mapleTrees, bareBoulders, mossyBoulders, logs, stumps, grass, reeds, wildflowers, bellFlowers, tallFlowers, lavenders, clovers, ferns, pebbles, fallenLeaves, cherryBlossoms, isSpring]);
 
   // Refs for stateless Plant/Bush components — one useFrame drives them all.
   const plantGroupRefs = useRef<(THREE.Group | null)[]>([]);
@@ -1793,6 +1842,22 @@ export function Chunk({ cx, cz, playerRef }: { cx: number; cz: number; playerRef
   const oz = cz * CHUNK_SIZE + CHUNK_SIZE / 2;
 
   const cattails = reeds.filter((r) => r.variant === 1);
+
+  // Cherry blossom petal geometry (flat, oval shape)
+  const cherryBlossomGeom = useMemo(() => {
+    const geom = new THREE.CircleGeometry(0.06, 5);
+    geom.rotateX(-Math.PI / 2); // Lay flat on ground
+    // Slight oval shape by scaling
+    geom.scale(1, 0.7, 1);
+    return geom;
+  }, []);
+  const cherryBlossomMat = useMemo(() => new THREE.MeshStandardMaterial({
+    color: '#ffffff',
+    roughness: 0.8,
+    side: THREE.DoubleSide,
+    transparent: true,
+    alphaTest: 0.3,
+  }), []);
 
   return (
     <group>
@@ -1988,6 +2053,15 @@ export function Chunk({ cx, cz, playerRef }: { cx: number; cz: number; playerRef
         <instancedMesh
           ref={fallenLeafRef}
           args={[fallenLeafGeom, fallenLeafMat, fallenLeaves.length]}
+          receiveShadow
+        />
+      )}
+
+      {/* Cherry blossom petals — carpet the ground in spring only */}
+      {world.season === 'spring' && cherryBlossoms.length > 0 && (
+        <instancedMesh
+          ref={cherryBlossomRef}
+          args={[cherryBlossomGeom, cherryBlossomMat, cherryBlossoms.length]}
           receiveShadow
         />
       )}

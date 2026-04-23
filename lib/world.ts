@@ -250,11 +250,13 @@ export function updateSunAndPalette() {
   const season = world.season;
   const seasonStrength = 0.25; // How strong the seasonal tint is
   if (season === 'spring') {
-    // Spring: fresh greens and soft pastels
-    world.skyColor.lerp(C('#c8e8d8'), seasonStrength * 0.5);
-    world.fogColor.lerp(C('#d8f0e0'), seasonStrength * 0.6);
-    world.ambientColor.lerp(C('#d0f0d8'), seasonStrength * 0.4);
-    world.ambientGround.lerp(C('#5a7a4a'), seasonStrength * 0.3);
+    // Spring: fresh vibrant greens, warm golden light, blooming atmosphere
+    world.skyColor.lerp(C('#b8e8f0'), seasonStrength * 0.4); // Brighter cyan sky
+    world.fogColor.lerp(C('#d8f5e8'), seasonStrength * 0.5); // Fresh minty fog
+    world.lightColor.lerp(C('#fff8d0'), seasonStrength * 0.3); // Warmer golden sun
+    world.ambientColor.lerp(C('#e0f8e8'), seasonStrength * 0.5); // Bright ambient
+    world.ambientGround.lerp(C('#6a9a5a'), seasonStrength * 0.4); // Fresh green ground
+    world.lightIntensity *= 1.12; // Brighter in spring
   } else if (season === 'summer') {
     // Summer: warm yellows, intense greens
     world.skyColor.lerp(C('#7ab8e0'), seasonStrength * 0.3);
