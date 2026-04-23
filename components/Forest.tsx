@@ -11,6 +11,7 @@ import { NPCs } from './NPCs';
 import { NPCDialog } from './NPCDialog';
 import { Weather } from './Weather';
 import { Soundscape } from './Audio';
+import { Effects } from './Effects';
 import { useGame, PlantKind, plantAvailable } from '@/lib/store';
 import {
   world,
@@ -378,7 +379,7 @@ function LakeFireflies({ playerRef }: { playerRef: React.MutableRefObject<Player
             <meshStandardMaterial
               color="#fff4a8"
               emissive="#d8ff80"
-              emissiveIntensity={4}
+              emissiveIntensity={6}
               toneMapped={false}
             />
           </mesh>
@@ -766,6 +767,7 @@ export default function Forest() {
         <Weather playerRef={playerRef} />
         <Player playerRef={playerRef} />
         <Interaction playerRef={playerRef} />
+        <Effects />
         <PointerLockControls
           selector=".enter-forest"
           onLock={() => setLocked(true)}
