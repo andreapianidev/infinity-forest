@@ -109,6 +109,13 @@ function WorldTick({ playerRef }: { playerRef: React.MutableRefObject<PlayerStat
       if (sh) {
         sh.uniforms.uTime.value = state.clock.elapsedTime;
         sh.uniforms.uWind.value = world.windStrength;
+        // Tree-foliage shader extras: subsurface/fresnel need sun info.
+        if (sh.uniforms.uSunDir) sh.uniforms.uSunDir.value.copy(world.sunDir).normalize();
+        if (sh.uniforms.uSunColor) {
+          sh.uniforms.uSunColor.value
+            .copy(world.lightColor)
+            .multiplyScalar(Math.max(0.3, world.lightIntensity * 0.9));
+        }
       }
     }
 

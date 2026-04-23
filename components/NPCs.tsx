@@ -79,11 +79,75 @@ function npcsForChunk(cx: number, cz: number): NPCInstance[] {
 }
 
 const NEARBY_RADIUS = 3.4;
+const WANDER_RADIUS = 8; // meters around anchor
+const WANDER_SPEED = 0.55; // m/s
+
+/** Runtime state kept across React renders, keyed by NPC id. */
+interface NPCRuntime {
+  animRef: React.MutableRefObject<NPCAnimState>;
+  // live position (may drift around anchor during wander)
+  x: number;
+  z: number;
+  rotY: number;
+  // wander bookkeeping
+  targetX: number;
+  targetZ: number;
+  pauseUntil: number; // elapsedTime threshold
+  // cached profile bits for nameplate (to avoid recompute)
+  name: string;
+  tagline: string;
+  accent: string;
+  headY: number;
+}
+
+const HEAD_Y_BY_KIND: Record<NPCKind, number> = {
+  wanderer: 1.95,
+  herbalist: 1.78,
+  ranger: 2.1,
+  lakeSeeker: 2.0,
+  poet: 2.18,
+  hunter: 2.1,
+  hermit: 1.7,
+  storyteller: 2.08,
+};
+
+/** Animated per-NPC wrapper so it can own its own group/animRef. */
+function NPCEntity({
+  instance,
+  runtime,
+}: {
+  instance: NPCInstance;
+  runtime: NPCRuntime;
+}) {
+  const groupRef = useRef<THREE.Group>(null);
+  useFrame(() => {
+    if (!groupRef.current) return;
+    const y = sampledHeight(runtime.x, runtime.z);
+    // Tiny idle bob only when not moving.
+    const bob = runtime.animRef.current.moving < 0.1
+      ? Math.sin(runtime.animRef.current.time * 1.1) * 0.03
+      : 0;
+    groupRef.current.position.set(runtime.x, y + bob, runtime.z);
+    groupRef.current.rotation.y = runtime.rotY;
+  });
+  return (
+    <group ref={groupRef}>
+      <NPCModel kind={instance.kind} animRef={runtime.animRef} />
+      <NPCAura kind={instance.kind} animRef={runtime.animRef} />
+      <NPCNameplate
+        name={runtime.name}
+        tagline={runtime.tagline}
+        accent={runtime.accent}
+        height={runtime.headY + 0.35}
+      />
+    </group>
+  );
+}
 
 export function NPCs({ playerRef }: { playerRef: React.MutableRefObject<PlayerState> }) {
   const [center, setCenter] = useState<[number, number]>([0, 0]);
-  const groupRef = useRef<THREE.Group>(null);
   const devGroupRef = useRef<THREE.Group>(null);
+  const devAnimRef = useRef<NPCAnimState>(createAnimState());
 
   // Rebuild NPC list only when chunk center changes.
   const npcs = useMemo(() => {
@@ -98,6 +162,32 @@ export function NPCs({ playerRef }: { playerRef: React.MutableRefObject<PlayerSt
     return out;
   }, [center]);
 
+  // Persistent runtime map keyed by id, survives re-renders.
+  const runtime = useRef<Map<string, NPCRuntime>>(new Map());
+  // Ensure every current NPC has a runtime entry; drop stale ones.
+  const liveIds = new Set(npcs.map((n) => n.id));
+  for (const [id] of runtime.current) {
+    if (!liveIds.has(id)) runtime.current.delete(id);
+  }
+  for (const n of npcs) {
+    if (!runtime.current.has(n.id)) {
+      const profile = getTerrainAdaptedProfile(n.kind);
+      runtime.current.set(n.id, {
+        animRef: { current: createAnimState() },
+        x: n.x,
+        z: n.z,
+        rotY: n.rot,
+        targetX: n.x,
+        targetZ: n.z,
+        pauseUntil: 0,
+        name: profile.name,
+        tagline: profile.tagline,
+        accent: profile.accent,
+        headY: HEAD_Y_BY_KIND[n.kind] ?? 1.9,
+      });
+    }
+  }
+
   const setNearby = useNPC((s) => s.setNearby);
   const dialogOpenFor = useNPC((s) => s.dialogOpenFor);
   const devNPC = useNPC((s) => s.devNPC);
@@ -105,113 +195,133 @@ export function NPCs({ playerRef }: { playerRef: React.MutableRefObject<PlayerSt
   const devNPCInitialized = useRef(false);
 
   useFrame((state) => {
-    const dt = state.clock.getDelta();
+    const dt = Math.min(0.08, state.clock.getDelta());
+    const t = state.clock.elapsedTime;
     const pp = playerRef.current.position;
     const cx = Math.floor(pp.x / CHUNK_SIZE);
     const cz = Math.floor(pp.z / CHUNK_SIZE);
     if (cx !== center[0] || cz !== center[1]) setCenter([cx, cz]);
 
-    // Initialize devNPC position on first spawn (spawn 8-15m away from player)
-    // Check both the ref AND the actual position to handle component remounts
-    const needsInit = devNPC && (devNPC.x === 0 && devNPC.z === 0) && !devNPCInitialized.current;
+    // Initialize devNPC position on first spawn
+    const needsInit = devNPC && devNPC.x === 0 && devNPC.z === 0 && !devNPCInitialized.current;
     if (needsInit) {
       const spawnAngle = Math.random() * Math.PI * 2;
-      const spawnDist = 8 + Math.random() * 7; // 8-15 meters away
+      const spawnDist = 8 + Math.random() * 7;
       const spawnX = pp.x + Math.sin(spawnAngle) * spawnDist;
       const spawnZ = pp.z + Math.cos(spawnAngle) * spawnDist;
-      updateDevNPC((n) => ({
-        ...n,
-        x: spawnX,
-        z: spawnZ,
-        targetX: pp.x,
-        targetZ: pp.z,
-      }));
+      updateDevNPC((n) => ({ ...n, x: spawnX, z: spawnZ, targetX: pp.x, targetZ: pp.z }));
       devNPCInitialized.current = true;
     }
+    if (!devNPC && devNPCInitialized.current) devNPCInitialized.current = false;
 
-    // Reset initialization flag when devNPC is cleared
-    if (!devNPC && devNPCInitialized.current) {
-      devNPCInitialized.current = false;
-    }
-
-    // nearest NPC within range
+    // Per-NPC update: wander + animation + pick closest for dialog
     let closest: NPCInstance | null = null;
     let closestDist = NEARBY_RADIUS;
-    for (let i = 0; i < npcs.length; i++) {
-      const n = npcs[i];
-      const d = Math.hypot(pp.x - n.x, pp.z - n.z);
-      if (d < closestDist) {
-        closestDist = d;
+    for (const n of npcs) {
+      const r = runtime.current.get(n.id);
+      if (!r) continue;
+      const dxPlayer = pp.x - r.x;
+      const dzPlayer = pp.z - r.z;
+      const distPlayer = Math.hypot(dxPlayer, dzPlayer);
+      if (distPlayer < closestDist) {
+        closestDist = distPlayer;
         closest = n;
       }
+
+      // Presence: 0 far, 1 very close
+      const presence = THREE.MathUtils.clamp(1 - distPlayer / 8, 0, 1);
+      r.animRef.current.presence = presence;
+      r.animRef.current.time = t;
+
+      // If player is very close, freeze wander and turn to face player.
+      if (distPlayer < 4.5) {
+        r.animRef.current.moving = Math.max(0, r.animRef.current.moving - dt * 2.2);
+        const targetRot = Math.atan2(dxPlayer, dzPlayer);
+        // Shortest-angle lerp
+        const diff = Math.atan2(
+          Math.sin(targetRot - r.rotY),
+          Math.cos(targetRot - r.rotY),
+        );
+        r.rotY += diff * Math.min(1, dt * 4);
+        r.pauseUntil = t + 1.2; // pause wander a bit after player leaves
+        // idle gesture: occasional slow head look
+        r.animRef.current.gesture += (0.3 - r.animRef.current.gesture) * dt * 1.5;
+      } else if (t < r.pauseUntil) {
+        // paused
+        r.animRef.current.moving = Math.max(0, r.animRef.current.moving - dt * 2);
+        r.animRef.current.gesture *= Math.max(0, 1 - dt * 1.2);
+      } else {
+        // Wander toward target
+        const dxT = r.targetX - r.x;
+        const dzT = r.targetZ - r.z;
+        const dT = Math.hypot(dxT, dzT);
+        if (dT < 0.4) {
+          // arrived — pick new target within WANDER_RADIUS of anchor (n.x/n.z)
+          const a = Math.random() * Math.PI * 2;
+          const rad = 2 + Math.random() * WANDER_RADIUS;
+          r.targetX = n.x + Math.cos(a) * rad;
+          r.targetZ = n.z + Math.sin(a) * rad;
+          r.pauseUntil = t + 2.5 + Math.random() * 5;
+          r.animRef.current.gestureId = Math.floor(Math.random() * 4);
+          r.animRef.current.moving = 0;
+        } else {
+          // move
+          const step = WANDER_SPEED * dt;
+          const nx = r.x + (dxT / dT) * step;
+          const nz = r.z + (dzT / dT) * step;
+          r.x = nx;
+          r.z = nz;
+          // face movement direction
+          const targetRot = Math.atan2(dxT, dzT);
+          const diff = Math.atan2(
+            Math.sin(targetRot - r.rotY),
+            Math.cos(targetRot - r.rotY),
+          );
+          r.rotY += diff * Math.min(1, dt * 3);
+          r.animRef.current.moving = Math.min(1, r.animRef.current.moving + dt * 2.5);
+        }
+      }
+      // Advance walk phase scaled by moving
+      r.animRef.current.phase += dt * (5.5 * r.animRef.current.moving + 0.3);
     }
+
     setNearby(
       closest
         ? {
             id: closest.id,
             kind: closest.kind,
-            x: closest.x,
-            z: closest.z,
+            x: runtime.current.get(closest.id)!.x,
+            z: runtime.current.get(closest.id)!.z,
             cx: closest.cx,
             cz: closest.cz,
           }
         : null,
     );
 
-    // bob/rotate visuals for regular NPCs
-    const t = state.clock.elapsedTime;
-    const group = groupRef.current;
-    if (group) {
-      for (let i = 0; i < npcs.length; i++) {
-        const child = group.children[i] as THREE.Group | undefined;
-        if (!child) continue;
-        const n = npcs[i];
-        child.position.y = n.y + Math.sin(t * 1.1 + i) * 0.04;
-        // Face the player softly when idle
-        const lookX = pp.x - n.x;
-        const lookZ = pp.z - n.z;
-        const targetRot = Math.atan2(lookX, lookZ);
-        child.rotation.y += (targetRot - child.rotation.y) * 0.02;
-        child.visible = true;
-      }
-    }
-
-    // Handle dev NPC - it walks toward the player
+    // Handle dev NPC - walks toward the player
     if (devNPC && devGroupRef.current) {
       const dx = pp.x - devNPC.x;
       const dz = pp.z - devNPC.z;
       const dist = Math.hypot(dx, dz);
-
-      // Always update position to ensure visibility (even at spawn)
       const ny = sampledHeight(devNPC.x, devNPC.z);
       devGroupRef.current.position.set(devNPC.x, ny, devNPC.z);
-
       if (dist > 0.5) {
-        // Move toward player
         const moveDist = Math.min(devNPC.speed * dt, dist);
         const nx = devNPC.x + (dx / dist) * moveDist;
         const nz = devNPC.z + (dz / dist) * moveDist;
         const nny = sampledHeight(nx, nz);
-        // Single update for both position and target
         updateDevNPC((n) => ({ ...n, x: nx, z: nz, targetX: pp.x, targetZ: pp.z }));
         devGroupRef.current.position.set(nx, nny, nz);
-        // Face player
         devGroupRef.current.rotation.y = Math.atan2(dx, dz);
+        devAnimRef.current.moving = Math.min(1, devAnimRef.current.moving + dt * 2.5);
       } else {
-        // Arrived - update target and set as nearby for interaction
         updateDevNPC((n) => ({ ...n, targetX: pp.x, targetZ: pp.z }));
-        setNearby({
-          id: devNPC.id,
-          kind: devNPC.kind,
-          x: devNPC.x,
-          z: devNPC.z,
-          cx: 0,
-          cz: 0,
-        });
+        setNearby({ id: devNPC.id, kind: devNPC.kind, x: devNPC.x, z: devNPC.z, cx: 0, cz: 0 });
+        devAnimRef.current.moving = Math.max(0, devAnimRef.current.moving - dt * 2.2);
       }
-
-      // Bob animation
-      devGroupRef.current.position.y = sampledHeight(devNPC.x, devNPC.z) + Math.sin(t * 2) * 0.03;
+      devAnimRef.current.phase += dt * (5.5 * devAnimRef.current.moving + 0.3);
+      devAnimRef.current.time = t;
+      devAnimRef.current.presence = 1;
     }
 
     void dialogOpenFor;
@@ -219,17 +329,15 @@ export function NPCs({ playerRef }: { playerRef: React.MutableRefObject<PlayerSt
 
   return (
     <>
-      <group ref={groupRef}>
-        {npcs.map((n) => (
-          <group key={n.id} position={[n.x, n.y, n.z]} rotation={[0, n.rot, 0]}>
-            <NPCModel kind={n.kind} />
-          </group>
-        ))}
-      </group>
-      {/* Dev mode spawned NPC that walks toward player */}
+      {npcs.map((n) => {
+        const r = runtime.current.get(n.id);
+        if (!r) return null;
+        return <NPCEntity key={n.id} instance={n} runtime={r} />;
+      })}
       {devNPC && (
         <group ref={devGroupRef} position={[devNPC.x, sampledHeight(devNPC.x, devNPC.z), devNPC.z]}>
-          <NPCModel kind={devNPC.kind} />
+          <NPCModel kind={devNPC.kind} animRef={devAnimRef} />
+          <NPCAura kind={devNPC.kind} animRef={devAnimRef} />
         </group>
       )}
     </>

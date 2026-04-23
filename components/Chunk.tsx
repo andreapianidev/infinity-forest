@@ -164,6 +164,174 @@ function foliageMat(color: string, opts: { roughness?: number; doubleSide?: bool
   return m;
 }
 
+/**
+ * Bake per-vertex AO/gradient on a tree canopy geometry.
+ *  - Vertical gradient: top bright, bottom dark → volume readability
+ *  - Outer-radius rim slightly brighter → edges catch light like real canopies
+ * Cost: one extra `color` attribute; zero draw-call overhead.
+ * Combined at render-time by MeshStandardMaterial's vertexColors with the
+ * base color AND per-instance color jitter.
+ */
+function bakeFoliageAO(geom: THREE.BufferGeometry): THREE.BufferGeometry {
+  const pos = geom.attributes.position as THREE.BufferAttribute;
+  geom.computeBoundingBox();
+  const bb = geom.boundingBox!;
+  const yMin = bb.min.y;
+  const yMax = bb.max.y;
+  const yRange = Math.max(0.001, yMax - yMin);
+  const colors = new Float32Array(pos.count * 3);
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i);
+    const y = pos.getY(i);
+    const z = pos.getZ(i);
+    const yn = (y - yMin) / yRange;
+    const rad = Math.hypot(x, z);
+    const radN = Math.min(1, rad / 2.0);
+    // Cubic-ease vertical: keeps underside in shadow, top punchy.
+    const vert = 0.5 + 0.5 * (yn * yn * (3 - 2 * yn));
+    const rim = 0.9 + 0.12 * radN;
+    const v = Math.min(1, vert * rim);
+    colors[3 * i] = v;
+    colors[3 * i + 1] = v;
+    colors[3 * i + 2] = v;
+  }
+  geom.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  return geom;
+}
+
+/**
+ * Foliage material dedicated to TREE canopies (not grass/bush/etc).
+ * Extends `foliageMat` with:
+ *  - vertexColors → reads bakeFoliageAO gradient
+ *  - uSunDir / uSunColor uniforms (updated in Forest.tsx WorldTick loop)
+ *  - Translucent subsurface backlight when sun is behind the leaf
+ *  - Fresnel rim for volume against fog/sky
+ *  - Worldspace hue noise to kill uniform green shading
+ *  - Subtle per-vertex flutter on top of the sway
+ * Compatible with per-instance `instanceColor` jitter (multiplied in).
+ */
+function treeFoliageMat(color: string): THREE.MeshStandardMaterial {
+  const m = new THREE.MeshStandardMaterial({
+    color,
+    roughness: 0.85,
+    metalness: 0,
+    vertexColors: true,
+    side: THREE.FrontSide,
+  });
+  m.onBeforeCompile = (shader) => {
+    shader.uniforms.uTime = { value: 0 };
+    shader.uniforms.uWind = { value: 1 };
+    shader.uniforms.uSunDir = { value: new THREE.Vector3(0.5, 0.8, 0.5) };
+    shader.uniforms.uSunColor = { value: new THREE.Color('#fff0c8') };
+    shader.vertexShader =
+      'uniform float uTime;\nuniform float uWind;\nvarying vec3 vWorldPosFol;\nvarying vec3 vWorldNormalFol;\n' +
+      shader.vertexShader
+        .replace(
+          '#include <begin_vertex>',
+          `#include <begin_vertex>
+          #ifdef USE_INSTANCING
+            vec4 iPosF = instanceMatrix * vec4(0.0,0.0,0.0,1.0);
+            float swayF = smoothstep(0.3, 6.0, transformed.y) * 0.4 * uWind;
+            transformed.x += sin(uTime*1.2 + iPosF.z*0.3 + iPosF.x*0.2) * swayF;
+            transformed.z += cos(uTime*0.9 + iPosF.x*0.25) * swayF * 0.7;
+            // leaf flutter — tiny high-frequency wobble
+            transformed.y += sin(uTime*2.6 + iPosF.x*0.5 + transformed.x*1.1) * swayF * 0.08;
+          #else
+            float swayF2 = smoothstep(0.3, 6.0, transformed.y) * 0.25 * uWind;
+            transformed.x += sin(uTime*1.2 + position.z*0.5) * swayF2;
+          #endif`,
+        )
+        .replace(
+          '#include <worldpos_vertex>',
+          `#include <worldpos_vertex>
+          vWorldPosFol = worldPosition.xyz;
+          vWorldNormalFol = normalize(mat3(modelMatrix) * objectNormal);`,
+        );
+    shader.fragmentShader =
+      'uniform vec3 uSunDir;\nuniform vec3 uSunColor;\nvarying vec3 vWorldPosFol;\nvarying vec3 vWorldNormalFol;\n' +
+      shader.fragmentShader.replace(
+        '#include <emissivemap_fragment>',
+        `#include <emissivemap_fragment>
+        {
+          vec3 vDirW = normalize(cameraPosition - vWorldPosFol);
+          vec3 sunW = normalize(uSunDir);
+          // Subsurface: sun behind leaf + viewer roughly aligned with sun direction
+          float back = clamp(dot(-vWorldNormalFol, sunW), 0.0, 1.0);
+          float wrap = pow(clamp(dot(vDirW, -sunW), 0.0, 1.0), 2.0);
+          totalEmissiveRadiance += uSunColor * diffuseColor.rgb * back * wrap * 0.55;
+          // Fresnel rim highlight for canopy volume
+          float rim = pow(1.0 - clamp(dot(vDirW, vWorldNormalFol), 0.0, 1.0), 3.0);
+          totalEmissiveRadiance += uSunColor * rim * 0.10;
+          // Worldspace hue noise breaks flat green
+          vec2 hcell = floor(vWorldPosFol.xz * 0.4);
+          float hn = fract(sin(dot(hcell, vec2(12.9898, 78.233))) * 43758.5453);
+          diffuseColor.rgb *= 0.86 + hn * 0.28;
+        }`,
+      );
+    (m.userData as any).shader = shader;
+  };
+  WIND_MATERIALS.push(m);
+  return m;
+}
+
+/**
+ * Procedural bark material: vertical striations + faint rings via local-space
+ * trigonometric noise. Darkens crevices without any texture lookup.
+ */
+function barkMat(color: string): THREE.MeshStandardMaterial {
+  const m = new THREE.MeshStandardMaterial({ color, roughness: 1, metalness: 0 });
+  m.onBeforeCompile = (shader) => {
+    shader.vertexShader =
+      'varying vec3 vLocalPosBk;\n' +
+      shader.vertexShader.replace(
+        '#include <begin_vertex>',
+        '#include <begin_vertex>\nvLocalPosBk = position;',
+      );
+    shader.fragmentShader =
+      'varying vec3 vLocalPosBk;\n' +
+      shader.fragmentShader.replace(
+        '#include <color_fragment>',
+        `#include <color_fragment>
+        float ang = atan(vLocalPosBk.z, vLocalPosBk.x);
+        float stripe = sin(ang * 22.0 + vLocalPosBk.y * 1.8) * 0.5 + 0.5;
+        float ring = sin(vLocalPosBk.y * 5.0) * 0.5 + 0.5;
+        float bark = mix(stripe, ring, 0.35);
+        diffuseColor.rgb *= (1.0 - bark * 0.38);
+        diffuseColor.rgb += vec3(0.04, 0.025, 0.012) * (1.0 - bark) * 0.6;`,
+      );
+  };
+  return m;
+}
+
+/**
+ * Birch-specific bark: characteristic horizontal dark scars on pale bark,
+ * broken by angular noise so scars don't form continuous rings.
+ */
+function birchBarkMat(color: string): THREE.MeshStandardMaterial {
+  const m = new THREE.MeshStandardMaterial({ color, roughness: 0.9, metalness: 0 });
+  m.onBeforeCompile = (shader) => {
+    shader.vertexShader =
+      'varying vec3 vLocalPosBk;\n' +
+      shader.vertexShader.replace(
+        '#include <begin_vertex>',
+        '#include <begin_vertex>\nvLocalPosBk = position;',
+      );
+    shader.fragmentShader =
+      'varying vec3 vLocalPosBk;\n' +
+      shader.fragmentShader.replace(
+        '#include <color_fragment>',
+        `#include <color_fragment>
+        float band = fract(vLocalPosBk.y * 1.1);
+        float scar = smoothstep(0.42, 0.5, band) - smoothstep(0.5, 0.58, band);
+        float ang = atan(vLocalPosBk.z, vLocalPosBk.x);
+        float n = fract(sin(floor(vLocalPosBk.y * 1.1) * 43.3 + ang * 9.1) * 311.7);
+        scar *= step(0.35, n);
+        diffuseColor.rgb *= (1.0 - scar * 0.78);`,
+      );
+  };
+  return m;
+}
+
 // ─────────── Shared geometries / materials ───────────
 
 // Slightly tapered trunk, a touch thicker at base for better silhouette.
@@ -188,7 +356,7 @@ const coniferGeom = (() => {
   const g2 = new THREE.ConeGeometry(1.55, 2.1, 10); g2.translate(0, 4.4, 0);
   const g3 = new THREE.ConeGeometry(1.05, 1.9, 10); g3.translate(0, 5.6, 0);
   const merged = mergeGeometries([g1, g2, g3]);
-  return merged ?? g1;
+  return bakeFoliageAO(merged ?? g1);
 })();
 
 /**
@@ -208,7 +376,7 @@ const broadleafGeom = (() => {
     return g;
   });
   const merged = mergeGeometries(parts);
-  return merged ?? parts[0];
+  return bakeFoliageAO(merged ?? parts[0]);
 })();
 
 /**
@@ -227,7 +395,7 @@ const birchGeom = (() => {
     return g;
   });
   const merged = mergeGeometries(parts);
-  return merged ?? parts[0];
+  return bakeFoliageAO(merged ?? parts[0]);
 })();
 
 /**
@@ -248,7 +416,7 @@ const oakGeom = (() => {
     return g;
   });
   const merged = mergeGeometries(parts);
-  return merged ?? parts[0];
+  return bakeFoliageAO(merged ?? parts[0]);
 })();
 
 /**
@@ -267,12 +435,12 @@ const mapleGeom = (() => {
     return g;
   });
   const merged = mergeGeometries(parts);
-  return merged ?? parts[0];
+  return bakeFoliageAO(merged ?? parts[0]);
 })();
 
-const trunkMat = new THREE.MeshStandardMaterial({ color: '#5a3a22', roughness: 1 });
-const birchTrunkMat = new THREE.MeshStandardMaterial({ color: '#d8d0c8', roughness: 0.9 }); // white bark
-const oakTrunkMat = new THREE.MeshStandardMaterial({ color: '#4a3020', roughness: 1 }); // darker, thicker
+const trunkMat = barkMat('#5a3a22');
+const birchTrunkMat = birchBarkMat('#d8d0c8'); // white bark with dark scars
+const oakTrunkMat = barkMat('#4a3020'); // darker, thicker
 
 // Terrain-aware foliage materials - create once per terrain type
 const FOLIAGE_COLORS = {
@@ -284,11 +452,13 @@ const FOLIAGE_COLORS = {
 };
 
 const colors = FOLIAGE_COLORS[TERRAIN_TYPE] ?? FOLIAGE_COLORS.flat;
-const coniferMat = foliageMat(colors.conifer);
-const broadleafMat = foliageMat(colors.broadleaf);
-const birchMat = foliageMat(colors.birch);
-const oakMat = foliageMat(colors.oak);
-const mapleMat = foliageMat(colors.maple);
+// Tree canopies use the richer tree-specific shader (subsurface, fresnel,
+// vertex-AO, hue noise). Bushes/grass/ferns/reeds keep the cheaper foliageMat.
+const coniferMat = treeFoliageMat(colors.conifer);
+const broadleafMat = treeFoliageMat(colors.broadleaf);
+const birchMat = treeFoliageMat(colors.birch);
+const oakMat = treeFoliageMat(colors.oak);
+const mapleMat = treeFoliageMat(colors.maple);
 
 // Decor: boulders / logs / stumps / bushes / grass / reeds / berry bushes
 const boulderGeom = (() => {
@@ -1270,6 +1440,35 @@ export function Chunk({ cx, cz, playerRef }: { cx: number; cz: number; playerRef
     fillPair(birchTrees, birchTrunkRef.current, birchFolRef.current);
     fillPair(oakTrees, oakTrunkRef.current, oakFolRef.current);
     fillPair(mapleTrees, mapleTrunkRef.current, mapleFolRef.current);
+
+    // Per-instance color jitter so every tree reads slightly unique
+    // (hue ±4°, lightness ±9%). Multiplies with the material base color
+    // via instanceColor × vertexColors in the standard shader.
+    const jitterColor = new THREE.Color();
+    const jitterBase = new THREE.Color(1, 1, 1);
+    const applyJitter = (
+      arr: TreeInstance[],
+      meshes: (THREE.InstancedMesh | null)[],
+      hueAmt: number,
+      lightAmt: number,
+    ) => {
+      for (const mesh of meshes) {
+        if (!mesh) continue;
+        for (let i = 0; i < arr.length; i++) {
+          const t = arr[i];
+          const h = hash2(Math.floor(t.x * 7.3), Math.floor(t.z * 7.3), 41) - 0.5;
+          const l = hash2(Math.floor(t.x * 7.3), Math.floor(t.z * 7.3), 43) - 0.5;
+          jitterColor.copy(jitterBase).offsetHSL(h * hueAmt, 0, l * lightAmt);
+          mesh.setColorAt(i, jitterColor);
+        }
+        if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+      }
+    };
+    applyJitter(coniferTrees, [coniferTrunkRef.current, coniferFolRef.current], 0.04, 0.18);
+    applyJitter(broadTrees, [broadTrunkRef.current, broadFolRef.current], 0.06, 0.2);
+    applyJitter(birchTrees, [birchTrunkRef.current, birchFolRef.current], 0.05, 0.16);
+    applyJitter(oakTrees, [oakTrunkRef.current, oakFolRef.current], 0.05, 0.18);
+    applyJitter(mapleTrees, [mapleTrunkRef.current, mapleFolRef.current], 0.08, 0.22);
     fill(bareBoulders, boulderRef.current);
     fill(mossyBoulders, mossyBoulderRef.current);
     fill(logs, logRef.current);

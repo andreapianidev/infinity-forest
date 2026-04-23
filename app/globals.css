@@ -395,6 +395,57 @@ canvas { display: block; touch-action: none; }
   flex-shrink: 0;
 }
 
+/* Mood indicator pill next to NPC name */
+.npc-mood {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; border-radius: 50%;
+  border: 1px solid currentColor;
+  font-size: 12px; line-height: 1;
+  background: rgba(0,0,0,0.35);
+  margin-right: 4px;
+}
+.npc-encounter {
+  font-size: 11px; opacity: 0.6; margin-left: 6px;
+  padding: 1px 6px; border-radius: 999px;
+  background: rgba(255,255,255,0.08);
+}
+
+/* Typewriter caret */
+.npc-caret {
+  display: inline-block; margin-left: 2px;
+  animation: npc-blink 0.9s steps(2, end) infinite;
+  opacity: 0.85;
+}
+@keyframes npc-blink {
+  50% { opacity: 0; }
+}
+
+/* Action row: memento buttons */
+.npc-actions {
+  display: flex; gap: 8px; padding: 4px 14px 8px;
+}
+.npc-action {
+  flex: 1; background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.12);
+  color: #d8e4c6;
+  border-radius: 8px; padding: 7px 10px; cursor: pointer;
+  font-family: inherit; font-size: 12.5px; letter-spacing: 0.2px;
+  transition: background 0.15s, border-color 0.15s;
+}
+.npc-action:hover { background: rgba(123,168,90,0.15); border-color: rgba(152,198,118,0.45); }
+.npc-action:disabled { opacity: 0.45; cursor: default; }
+
+/* Mementos panel entries */
+.npc-memento {
+  padding: 10px 12px; border-radius: 10px;
+  background: rgba(123,168,90,0.1);
+  border: 1px solid rgba(152,198,118,0.22);
+  display: flex; flex-direction: column; gap: 2px;
+}
+.npc-memento-title { font-weight: 700; color: #e0ecc8; font-size: 13.5px; }
+.npc-memento-from { font-size: 11px; opacity: 0.65; font-style: italic; }
+.npc-memento-desc { font-size: 12.5px; line-height: 1.45; color: #d0dbc0; margin-top: 3px; }
+
 @media (max-width: 840px) {
   .hud { padding: 14px; }
   .top-bar { flex-direction: column; align-items: stretch; }
