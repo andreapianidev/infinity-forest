@@ -498,17 +498,33 @@ const trunkMat = barkMat('#5a3a22');
 const birchTrunkMat = birchBarkMat('#d8d0c8'); // white bark with dark scars
 const oakTrunkMat = barkMat('#4a3020'); // darker, thicker
 
+// Multiple autumn colors for variety - each tree gets one based on position hash
+const AUTUMN_COLOR_VARIATIONS = {
+  conifer: ['#2d5a35', '#1e4a25', '#2d4a30'], // Evergreens stay mostly green
+  broadleaf: ['#8a6a20', '#a07018', '#b07820', '#7a5a15'], // Golden to brown
+  birch: ['#d8a030', '#e8b040', '#c89020', '#f0c050'], // Yellow to gold
+  oak: ['#8a5a20', '#a06828', '#704818', '#b07030'], // Rust to brown
+  maple: ['#e85018', '#d04020', '#f06020', '#c03010', '#ff7020'], // Red to orange
+};
+
 // Seasonal foliage colors - each tree type has variants for each season
 const SEASONAL_FOLIAGE_COLORS: Record<Season, { conifer: string; broadleaf: string; birch: string; oak: string; maple: string }> = {
   // Spring: bright fresh greens, light birch yellows, fresh oak
   spring: { conifer: '#2d7a3a', broadleaf: '#6aba40', birch: '#a0d070', oak: '#5a8a38', maple: '#d09040' },
   // Summer: deep rich greens
   summer: { conifer: '#1e5a25', broadleaf: '#4a8a28', birch: '#7ab050', oak: '#3d6a28', maple: '#a06020' },
-  // Autumn: warm oranges, reds, golden yellows
+  // Autumn: warm oranges, reds, golden yellows - base colors, actual varies per tree
   autumn: { conifer: '#2d5a35', broadleaf: '#8a6a20', birch: '#d8a030', oak: '#8a5a20', maple: '#e85018' },
   // Winter: muted dark greens, grays (evergreens keep some color)
   winter: { conifer: '#1e3a25', broadleaf: '#3a4a30', birch: '#5a6a50', oak: '#3a4a35', maple: '#4a4035' },
 };
+
+/** Get a specific autumn color variation based on tree position */
+function getAutumnColor(treeKind: 'conifer' | 'broadleaf' | 'birch' | 'oak' | 'maple', x: number, z: number): string {
+  const variations = AUTUMN_COLOR_VARIATIONS[treeKind];
+  const hash = hash2(Math.floor(x * 10), Math.floor(z * 10), 89);
+  return variations[Math.floor(hash * variations.length)];
+}
 
 // Terrain modifiers - adjust base colors per terrain type
 const TERRAIN_FOLIAGE_MODIFIERS: Record<string, { conifer: number; broadleaf: number; birch: number; oak: number; maple: number }> = {
@@ -682,6 +698,33 @@ const WILDFLOWER_PALETTE: THREE.Color[] = [
   new THREE.Color('#60a0f0'), // cornflower
   new THREE.Color('#f0a030'), // marigold
   new THREE.Color('#b870d0'), // lilac
+];
+
+// ──────────── Fallen Autumn Leaves ────────────
+// Scattered leaf shapes that carpet the ground in autumn
+const fallenLeafGeom = (() => {
+  // Simple flat leaf shape - oval with slight irregularity
+  const leaf = new THREE.CircleGeometry(0.08, 7);
+  leaf.rotateX(-Math.PI / 2); // Lay flat on ground
+  // Slight random deformation would happen at instance level via scale
+  return leaf;
+})();
+const fallenLeafMat = new THREE.MeshStandardMaterial({
+  color: '#ffffff', // White base, tinted per-instance
+  roughness: 1,
+  side: THREE.DoubleSide,
+  transparent: true,
+  alphaTest: 0.5,
+});
+
+// Autumn leaf colors - warm reds, oranges, golds, browns
+const FALLEN_LEAF_PALETTE: THREE.Color[] = [
+  new THREE.Color('#c83010'), // deep red
+  new THREE.Color('#e85018'), // bright orange-red
+  new THREE.Color('#f07020'), // orange
+  new THREE.Color('#d8a030'), // golden yellow
+  new THREE.Color('#a06820'), // rust brown
+  new THREE.Color('#8a5a18'), // dark brown
 ];
 
 // ──────────── Bell Flowers (bluebell type) ────────────
@@ -1170,6 +1213,32 @@ function pebblePlacements(cx: number, cz: number): {
   return out;
 }
 
+/** Fallen leaves on ground - only visible in autumn */
+function fallenLeafPlacements(cx: number, cz: number): { x: number; z: number; y: number; scale: number; rot: number; colorIdx: number }[] {
+  const out: { x: number; z: number; y: number; scale: number; rot: number; colorIdx: number }[] = [];
+  // More leaves in autumn - N=15 for dense coverage
+  const N = 15;
+  for (let i = 0; i < N * N; i++) {
+    const gx = i % N, gz = Math.floor(i / N);
+    const r = hash2(cx * N + gx, cz * N + gz, 401);
+    // 40% chance for a fallen leaf patch
+    if (r > 0.4) continue;
+    const jx = hash2(cx * N + gx, cz * N + gz, 403);
+    const jz = hash2(cx * N + gx, cz * N + gz, 407);
+    const x = cx * CHUNK_SIZE + (gx + jx) * (CHUNK_SIZE / N);
+    const z = cz * CHUNK_SIZE + (gz + jz) * (CHUNK_SIZE / N);
+    const y = sampledHeight(x, z);
+    // Only on dry ground, not underwater or on high peaks
+    if (y < WATER_LEVEL + 0.2 || y > 6) continue;
+    const scale = 0.6 + hash2(cx * N + gx, cz * N + gz, 409) * 0.8;
+    const rot = hash2(cx * N + gx, cz * N + gz, 411) * Math.PI * 2;
+    // Random autumn color for each leaf
+    const colorIdx = Math.floor(hash2(cx * N + gx, cz * N + gz, 413) * 6);
+    out.push({ x, z, y, scale, rot, colorIdx });
+  }
+  return out;
+}
+
 function reedPlacements(cx: number, cz: number): DecorInstance[] {
   const out: DecorInstance[] = [];
   const N = 10;
@@ -1503,6 +1572,7 @@ export function Chunk({ cx, cz, playerRef }: { cx: number; cz: number; playerRef
   const clovers = useMemo(() => cloverPlacements(cx, cz), [cx, cz]);
   const ferns = useMemo(() => fernPlacements(cx, cz), [cx, cz]);
   const pebbles = useMemo(() => pebblePlacements(cx, cz), [cx, cz]);
+  const fallenLeaves = useMemo(() => fallenLeafPlacements(cx, cz), [cx, cz]);
   const plants = useMemo(() => plantsForChunk(cx, cz), [cx, cz]);
 
   const coniferTrunkRef = useRef<THREE.InstancedMesh>(null);
@@ -1531,6 +1601,7 @@ export function Chunk({ cx, cz, playerRef }: { cx: number; cz: number; playerRef
   const cloverRef = useRef<THREE.InstancedMesh>(null);
   const fernRef = useRef<THREE.InstancedMesh>(null);
   const pebbleRef = useRef<THREE.InstancedMesh>(null);
+  const fallenLeafRef = useRef<THREE.InstancedMesh>(null);
 
   // Fill all instanced meshes
   useEffect(() => {
@@ -1563,14 +1634,15 @@ export function Chunk({ cx, cz, playerRef }: { cx: number; cz: number; playerRef
     fillPair(oakTrees, oakTrunkRef.current, oakFolRef.current);
     fillPair(mapleTrees, mapleTrunkRef.current, mapleFolRef.current);
 
-    // Per-instance color jitter so every tree reads slightly unique
-    // (hue ±4°, lightness ±9%). Multiplies with the material base color
-    // via instanceColor × vertexColors in the standard shader.
+    // Per-instance color: autumn gets unique colors per tree, other seasons get jitter
+    const isAutumn = world.season === 'autumn';
     const jitterColor = new THREE.Color();
     const jitterBase = new THREE.Color(1, 1, 1);
-    const applyJitter = (
+    
+    const applyTreeColors = (
       arr: TreeInstance[],
       meshes: (THREE.InstancedMesh | null)[],
+      treeKind: 'conifer' | 'broadleaf' | 'birch' | 'oak' | 'maple',
       hueAmt: number,
       lightAmt: number,
     ) => {
@@ -1578,19 +1650,31 @@ export function Chunk({ cx, cz, playerRef }: { cx: number; cz: number; playerRef
         if (!mesh) continue;
         for (let i = 0; i < arr.length; i++) {
           const t = arr[i];
-          const h = hash2(Math.floor(t.x * 7.3), Math.floor(t.z * 7.3), 41) - 0.5;
-          const l = hash2(Math.floor(t.x * 7.3), Math.floor(t.z * 7.3), 43) - 0.5;
-          jitterColor.copy(jitterBase).offsetHSL(h * hueAmt, 0, l * lightAmt);
+          if (isAutumn) {
+            // In autumn: each tree gets a specific autumn color variation
+            const autumnHex = getAutumnColor(treeKind, t.x, t.z);
+            jitterColor.set(autumnHex);
+            // Add slight variation within the same color family
+            const h = hash2(Math.floor(t.x * 7.3), Math.floor(t.z * 7.3), 41) - 0.5;
+            const l = hash2(Math.floor(t.x * 7.3), Math.floor(t.z * 7.3), 43) - 0.5;
+            jitterColor.offsetHSL(h * hueAmt * 0.5, 0, l * lightAmt * 0.5);
+          } else {
+            // Other seasons: standard jitter
+            const h = hash2(Math.floor(t.x * 7.3), Math.floor(t.z * 7.3), 41) - 0.5;
+            const l = hash2(Math.floor(t.x * 7.3), Math.floor(t.z * 7.3), 43) - 0.5;
+            jitterColor.copy(jitterBase).offsetHSL(h * hueAmt, 0, l * lightAmt);
+          }
           mesh.setColorAt(i, jitterColor);
         }
         if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
       }
     };
-    applyJitter(coniferTrees, [coniferTrunkRef.current, coniferFolRef.current], 0.04, 0.18);
-    applyJitter(broadTrees, [broadTrunkRef.current, broadFolRef.current], 0.06, 0.2);
-    applyJitter(birchTrees, [birchTrunkRef.current, birchFolRef.current], 0.05, 0.16);
-    applyJitter(oakTrees, [oakTrunkRef.current, oakFolRef.current], 0.05, 0.18);
-    applyJitter(mapleTrees, [mapleTrunkRef.current, mapleFolRef.current], 0.08, 0.22);
+    
+    applyTreeColors(coniferTrees, [coniferTrunkRef.current, coniferFolRef.current], 'conifer', 0.04, 0.18);
+    applyTreeColors(broadTrees, [broadTrunkRef.current, broadFolRef.current], 'broadleaf', 0.06, 0.2);
+    applyTreeColors(birchTrees, [birchTrunkRef.current, birchFolRef.current], 'birch', 0.05, 0.16);
+    applyTreeColors(oakTrees, [oakTrunkRef.current, oakFolRef.current], 'oak', 0.05, 0.18);
+    applyTreeColors(mapleTrees, [mapleTrunkRef.current, mapleFolRef.current], 'maple', 0.08, 0.22);
     fill(bareBoulders, boulderRef.current);
     fill(mossyBoulders, mossyBoulderRef.current);
     fill(logs, logRef.current);
@@ -1606,6 +1690,7 @@ export function Chunk({ cx, cz, playerRef }: { cx: number; cz: number; playerRef
     fill(clovers, cloverRef.current);
     fill(ferns, fernRef.current);
     fill(pebbles, pebbleRef.current);
+    fill(fallenLeaves, fallenLeafRef.current);
     // Apply per-instance tint to flowers so each one takes a palette colour.
     if (wildflowerRef.current) {
       for (let i = 0; i < wildflowers.length; i++) {
@@ -1628,7 +1713,16 @@ export function Chunk({ cx, cz, playerRef }: { cx: number; cz: number; playerRef
       }
       if (tallFlowerRef.current.instanceColor) tallFlowerRef.current.instanceColor.needsUpdate = true;
     }
-  }, [coniferTrees, broadTrees, birchTrees, oakTrees, mapleTrees, bareBoulders, mossyBoulders, logs, stumps, grass, reeds, wildflowers, bellFlowers, tallFlowers, lavenders, clovers, ferns, pebbles]);
+    
+    // Apply autumn colors to fallen leaves
+    if (fallenLeafRef.current) {
+      for (let i = 0; i < fallenLeaves.length; i++) {
+        const c = FALLEN_LEAF_PALETTE[fallenLeaves[i].colorIdx] ?? FALLEN_LEAF_PALETTE[0];
+        fallenLeafRef.current.setColorAt(i, c);
+      }
+      if (fallenLeafRef.current.instanceColor) fallenLeafRef.current.instanceColor.needsUpdate = true;
+    }
+  }, [coniferTrees, broadTrees, birchTrees, oakTrees, mapleTrees, bareBoulders, mossyBoulders, logs, stumps, grass, reeds, wildflowers, bellFlowers, tallFlowers, lavenders, clovers, ferns, pebbles, fallenLeaves, world.season]);
 
   // Refs for stateless Plant/Bush components — one useFrame drives them all.
   const plantGroupRefs = useRef<(THREE.Group | null)[]>([]);
@@ -1885,6 +1979,15 @@ export function Chunk({ cx, cz, playerRef }: { cx: number; cz: number; playerRef
         <instancedMesh
           ref={pebbleRef}
           args={[pebbleGeom, pebbleMat, pebbles.length]}
+          receiveShadow
+        />
+      )}
+
+      {/* Fallen autumn leaves — carpet the ground in autumn only */}
+      {world.season === 'autumn' && fallenLeaves.length > 0 && (
+        <instancedMesh
+          ref={fallenLeafRef}
+          args={[fallenLeafGeom, fallenLeafMat, fallenLeaves.length]}
           receiveShadow
         />
       )}
