@@ -11,7 +11,7 @@ import { NPCs } from './NPCs';
 import { NPCDialog } from './NPCDialog';
 import { Weather } from './Weather';
 import { Soundscape } from './Audio';
-import { Effects } from './Effects';
+import { Effects, LensFlare } from './Effects';
 import { useGame, PlantKind, plantAvailable } from '@/lib/store';
 import {
   world,
@@ -617,6 +617,18 @@ function InfiniteWater({ playerRef }: { playerRef: React.MutableRefObject<Player
              // Diffuse sparkle (softer, broader)
              float sparkle = pow(max(dot(normal, uSunDir), 0.0), 24.0);
              totalEmissiveRadiance += uSunColor * sparkle * 0.2;
+             // Caustics - dancing light patterns when sun hits water
+             float sunHeight = max(0.0, uSunDir.y);
+             if (sunHeight > 0.2) {
+               vec2 cuv = vWorldXZ.xz * 0.6;
+               float ct = uTime * 0.8;
+               // Multiple overlapping sine waves create caustic-like patterns
+               float c1 = sin(cuv.x * 3.0 + ct) * cos(cuv.y * 2.5 - ct * 0.7);
+               float c2 = sin(cuv.x * 2.2 - ct * 0.6) * sin(cuv.y * 3.3 + ct * 0.5);
+               float c3 = sin((cuv.x + cuv.y) * 2.8 + ct * 0.4);
+               float caustic = pow(abs(c1 + c2 + c3) * 0.35, 3.0) * sunHeight;
+               totalEmissiveRadiance += uSunColor * caustic * 0.35;
+             }
            }`
         );
     };
@@ -768,6 +780,7 @@ export default function Forest() {
         <Player playerRef={playerRef} />
         <Interaction playerRef={playerRef} />
         <Effects />
+        <LensFlare />
         <PointerLockControls
           selector=".enter-forest"
           onLock={() => setLocked(true)}

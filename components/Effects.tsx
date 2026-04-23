@@ -175,8 +175,37 @@ export function LensFlare() {
     materialRef.current = material;
   }, [material]);
   
+  // Update lens flare intensity based on camera angle to sun
+  useFrame((state) => {
+    if (!materialRef.current) return;
+    
+    const camera = state.camera;
+    const sunDir = world.sunDir.clone().normalize();
+    
+    // Get camera forward direction
+    const camDir = new THREE.Vector3();
+    camera.getWorldDirection(camDir);
+    
+    // Calculate alignment - 1.0 when looking directly at sun, 0.0 when 90° off
+    const alignment = Math.max(0, camDir.dot(sunDir));
+    
+    // Only show flare when sun is somewhat in front of camera and above horizon
+    const sunAboveHorizon = sunDir.y > -0.1;
+    const intensity = sunAboveHorizon ? Math.pow(alignment, 4) * 0.8 : 0;
+    
+    materialRef.current.uniforms.uIntensity.value = intensity;
+    materialRef.current.uniforms.uSunDir.value.copy(sunDir);
+    materialRef.current.uniforms.uTime.value = state.clock.elapsedTime;
+    
+    // Color changes with time of day
+    const hour = world.hour;
+    const isDay = hour >= 6 && hour < 18;
+    const color = isDay ? new THREE.Color('#fff0c8') : new THREE.Color('#b8c8ff');
+    materialRef.current.uniforms.uSunColor.value.copy(color);
+  });
+  
   return (
-    <mesh ref={meshRef} material={material}>
+    <mesh ref={meshRef} material={material} renderOrder={1000}>
       <planeGeometry args={[2, 2]} />
     </mesh>
   );
