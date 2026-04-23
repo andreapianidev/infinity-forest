@@ -1,7 +1,7 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { useGame, PLANT_LABELS, PLANT_HINT, PlantKind } from '@/lib/store';
-import { useHUDWorld, useSettings, requestGeolocation, getLocalSunsetTime, getRealSeason, Season, SeasonMode, TerrainType } from '@/lib/world';
+import { useHUDWorld, useSettings, requestGeolocation, getLocalSunsetTime, getRealSeason, Season, SeasonMode, TerrainType, getMoonIcon } from '@/lib/world';
 import { WORLD_SEED, rerollWorldSeed } from '@/lib/noise';
 import { useNPC, DevNPC, NPCKind, NPC_PROFILES } from '@/lib/npc';
 
@@ -84,6 +84,25 @@ function fmtTime(hour: number): string {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 }
 
+function fmtDuration(seconds: number): string {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+function fmtDistance(meters: number): string {
+  if (meters >= 1000) return `${(meters / 1000).toFixed(2)} km`;
+  return `${Math.round(meters)} m`;
+}
+
+function fmtSpeed(ms: number): string {
+  // Convert m/s to km/h
+  const kmh = ms * 3.6;
+  return `${kmh.toFixed(1)} km/h`;
+}
+
 function releaseMouse() {
   if (typeof document !== 'undefined' && document.pointerLockElement) document.exitPointerLock();
 }
@@ -128,6 +147,18 @@ export function HUD({ locked }: { locked: boolean }) {
   const setDevMode = useSettings((s) => s.setDevMode);
   const weatherLevel = weather === 'rain' ? rainT : weather === 'fog' ? fogT : weather === 'snow' ? snowT : 0;
   const altitude = useHUDWorld((s) => s.altitude);
+  // Exploration stats
+  const distanceTraveled = useHUDWorld((s) => s.distanceTraveled);
+  const playerSpeed = useHUDWorld((s) => s.playerSpeed);
+  const facing = useHUDWorld((s) => s.facing);
+  const posX = useHUDWorld((s) => s.posX);
+  const posZ = useHUDWorld((s) => s.posZ);
+  // Progress stats
+  const sessionTime = useHUDWorld((s) => s.sessionTime);
+  const plantsCollected = useHUDWorld((s) => s.plantsCollected);
+  // Environmental stats
+  const temperature = useHUDWorld((s) => s.temperature);
+  const moonPhase = useHUDWorld((s) => s.moonPhase);
 
   // Get current season (auto from real time or manual)
   const season = useHUDWorld((s) => s.season);
@@ -181,6 +212,20 @@ export function HUD({ locked }: { locked: boolean }) {
             <div className="clock">{fmtTime(hour)} · {PHASE_LABEL[phase] ?? phase}</div>
             <div className="season">{effectiveSeason.charAt(0).toUpperCase() + effectiveSeason.slice(1)}</div>
             <div className="altitude">⛰️ {altitude.toFixed(1)}m</div>
+            <div className="temperature">🌡️ {temperature.toFixed(1)}°C</div>
+            <div className="moon">{getMoonIcon(moonPhase)} {['New','Waxing','Quarter','Gibbous','Full','Waning','Last','Crescent'][moonPhase]}</div>
+            
+            {/* Exploration Stats */}
+            <div className="exploration-stats" style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px solid rgba(0,0,0,0.1)' }}>
+              <div>🚶 {fmtDistance(distanceTraveled)} · ⚡ {fmtSpeed(playerSpeed)}</div>
+              <div style={{ fontSize: '0.85em', opacity: 0.8 }}>🧭 {facing} · 📍 {Math.round(posX)},{Math.round(posZ)}</div>
+            </div>
+            
+            {/* Progress Stats */}
+            <div className="progress-stats" style={{ marginTop: '6px', fontSize: '0.85em', opacity: 0.8 }}>
+              ⏱️ {fmtDuration(sessionTime)} · 🌿 {plantsCollected} piante
+            </div>
+            
             {realtimeClock && (() => {
               const sunset = getLocalSunsetTime();
               return (

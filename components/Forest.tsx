@@ -11,7 +11,7 @@ import { NPCs } from './NPCs';
 import { NPCDialog } from './NPCDialog';
 import { Weather } from './Weather';
 import { Soundscape } from './Audio';
-import { useGame } from '@/lib/store';
+import { useGame, PlantKind, plantAvailable } from '@/lib/store';
 import {
   world,
   WATER_LEVEL,
@@ -24,17 +24,35 @@ import {
   currentLocalHour,
   phaseOf,
   getRealSeason,
+  calculateTemperature,
+  getMoonPhase,
 } from '@/lib/world';
 
-import { CHUNK_SIZE, lakeMask, sampledHeight, heightAt } from '@/lib/noise';
+import { CHUNK_SIZE, lakeMask, sampledHeight, heightAt, WORLD_SEED } from '@/lib/noise';
 // 5×5 = 25 chunks loaded around the player (≈320m × 320m). This is the
 // sweet spot for perf: denser per-chunk generation fills the forest visually
 // while instanced draw-call count stays bounded. Fog masks the far edge.
 export const VIEW_RADIUS = 2;
 
+/** Convert camera direction to compass facing */
+function getFacingFromCamera(camera: THREE.Camera): string {
+  const dir = new THREE.Vector3();
+  camera.getWorldDirection(dir);
+  const angle = Math.atan2(dir.x, dir.z); // angle from -Z (north)
+  const deg = (angle * 180 / Math.PI + 360) % 360;
+  if (deg >= 337.5 || deg < 22.5) return 'N';
+  if (deg >= 22.5 && deg < 67.5) return 'NE';
+  if (deg >= 67.5 && deg < 112.5) return 'E';
+  if (deg >= 112.5 && deg < 157.5) return 'SE';
+  if (deg >= 157.5 && deg < 202.5) return 'S';
+  if (deg >= 202.5 && deg < 247.5) return 'SW';
+  if (deg >= 247.5 && deg < 292.5) return 'W';
+  return 'NW';
+}
+
 /** Drives time, weather, calm and pushes palette to scene each frame. */
 function WorldTick({ playerRef }: { playerRef: React.MutableRefObject<PlayerState> }) {
-  const { scene, gl } = useThree();
+  const { scene, gl, camera } = useThree();
   const sun = useRef<THREE.DirectionalLight>(null);
   const sunTarget = useRef<THREE.Object3D>(null);
   const hemi = useRef<THREE.HemisphereLight>(null);
@@ -43,6 +61,7 @@ function WorldTick({ playerRef }: { playerRef: React.MutableRefObject<PlayerStat
   const hudSet = useHUDWorld((s) => s.set);
   const hudTimer = useRef(0);
   const [showStars, setShowStars] = useState(false);
+  const lastPos = useRef<THREE.Vector3 | null>(null);
 
   useEffect(() => {
     gl.toneMapping = THREE.ACESFilmicToneMapping;
@@ -58,6 +77,17 @@ function WorldTick({ playerRef }: { playerRef: React.MutableRefObject<PlayerStat
     // Season sync: auto = from real date, or manual selection
     world.season = seasonMode === 'auto' ? getRealSeason() : seasonMode;
     const pp = playerRef.current.position;
+    
+    // Track distance traveled
+    if (lastPos.current) {
+      const dx = pp.x - lastPos.current.x;
+      const dz = pp.z - lastPos.current.z;
+      const dist = Math.sqrt(dx * dx + dz * dz);
+      world.distanceTraveled += dist;
+    }
+    if (!lastPos.current) lastPos.current = new THREE.Vector3();
+    lastPos.current.copy(pp);
+    
     updateLocalMoisture(pp.x, pp.z, dt);
     stepWeather(dt);
     stepCalm(dt);
@@ -127,7 +157,26 @@ function WorldTick({ playerRef }: { playerRef: React.MutableRefObject<PlayerStat
       hudTimer.current = 0;
       const pp = playerRef.current.position;
       const altitude = heightAt(pp.x, pp.z);
-      hudSet({ hour: world.hour, phase: world.phase, season: world.season, weather: world.weather, calm: world.calm, rainT: world.rainT, fogT: world.fogT, postRainT: world.postRainT, stormT: world.stormT, snowT: world.snowT, lightningFlash: world.lightningFlash, altitude });
+      const temp = calculateTemperature(altitude, world.season, world.hour, world.weather);
+      const moonPhase = getMoonPhase();
+      const sessionTime = Math.floor((Date.now() - world.sessionStartTime) / 1000);
+      
+      // Calculate facing direction from camera rotation
+      const facing = getFacingFromCamera(camera);
+      
+      hudSet({ 
+        hour: world.hour, phase: world.phase, season: world.season, weather: world.weather, 
+        calm: world.calm, rainT: world.rainT, fogT: world.fogT, postRainT: world.postRainT, 
+        stormT: world.stormT, snowT: world.snowT, lightningFlash: world.lightningFlash, altitude,
+        // Exploration
+        distanceTraveled: world.distanceTraveled, playerSpeed: world.playerSpeed, facing,
+        posX: pp.x, posZ: pp.z,
+        // Progress
+        sessionTime,
+        plantsCollected: useGame.getState().sessionPlants,
+        // Environmental
+        temperature: temp, moonPhase
+      });
       const nowShowStars = world.hour > 20 || world.hour < 6;
       if (nowShowStars !== showStars) setShowStars(nowShowStars);
     }

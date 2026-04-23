@@ -5,9 +5,12 @@ import * as THREE from 'three';
 import { CHUNK_SIZE, hash2, sampledHeight, TERRAIN_TYPE } from '@/lib/noise';
 import { WATER_LEVEL } from '@/lib/world';
 import { NPCKind, kindForChunk, useNPC, getTerrainAdaptedProfile } from '@/lib/npc';
+import { NPCAnimState, createAnimState } from '@/lib/npcAnim';
 import { PlayerState } from './Player';
 import { VIEW_RADIUS } from './Forest';
 import { NPCModel } from './NPCModel';
+import { NPCNameplate } from './NPCNameplate';
+import { NPCAura } from './NPCAura';
 
 interface NPCInstance {
   id: string;

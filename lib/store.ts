@@ -58,6 +58,7 @@ interface GameState {
   collected: Set<string>;
   nearbyPlantId: string | null;
   nearbyPlantKind: PlantKind | null;
+  sessionPlants: number; // Plants collected this session
   setNearby: (id: string | null, kind: PlantKind | null) => void;
   collect: (id: string, kind: PlantKind) => void;
 }
@@ -67,15 +68,17 @@ export const useGame = create<GameState>((set, get) => ({
   collected: new Set<string>(),
   nearbyPlantId: null,
   nearbyPlantKind: null,
+  sessionPlants: 0,
   setNearby: (id, kind) => set({ nearbyPlantId: id, nearbyPlantKind: kind }),
   collect: (id, kind) => {
-    const { collected, inventory } = get();
+    const { collected, inventory, sessionPlants } = get();
     if (collected.has(id)) return;
     const next = new Set(collected);
     next.add(id);
     set({
       collected: next,
       inventory: { ...inventory, [kind]: inventory[kind] + 1 },
+      sessionPlants: sessionPlants + 1,
       nearbyPlantId: null,
       nearbyPlantKind: null,
     });

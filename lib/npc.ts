@@ -163,6 +163,180 @@ export function openingFor(profile: NPCProfile, cx: number, cz: number): string 
   return profile.openings[Math.min(profile.openings.length - 1, idx)];
 }
 
+/**
+ * Opening enriched with a short context-aware addendum. Keeps the base line
+ * stable (so the character feels consistent) but adds a sentence reflecting
+ * current hour, weather and kind personality.
+ */
+export function contextualOpening(
+  profile: NPCProfile,
+  kind: NPCKind,
+  cx: number,
+  cz: number,
+  ctx: { hour: number; phase: string; weather: string },
+): string {
+  const base = openingFor(profile, cx, cz);
+  const hour = Math.floor(ctx.hour);
+  const addendums: string[] = [];
+
+  if (ctx.weather === 'rain' || ctx.weather === 'thunderstorm') {
+    const rainLines: Partial<Record<NPCKind, string>> = {
+      wanderer: 'La pioggia accompagna i passi.',
+      herbalist: 'La pioggia fa aprire le foglie.',
+      ranger: 'Attento, il suolo e scivoloso.',
+      lakeSeeker: 'L\'acqua cade, l\'acqua chiama.',
+      poet: 'Ogni goccia e un verso che cade.',
+      hunter: 'Le tracce durano poco oggi.',
+      hermit: 'Ho una lanterna, se serve.',
+      storyteller: 'Le storie migliori si raccontano sotto il temporale.',
+    };
+    const line = rainLines[kind];
+    if (line) addendums.push(line);
+  } else if (ctx.weather === 'fog') {
+    addendums.push('La nebbia nasconde piu di quanto mostri.');
+  } else if (ctx.weather === 'snow') {
+    addendums.push('La neve attutisce ogni voce.');
+  }
+
+  if (ctx.phase === 'night' && !addendums.length) {
+    addendums.push('La notte e lunga, se la ascolti.');
+  } else if (ctx.phase === 'dawn' && !addendums.length) {
+    addendums.push('L\'alba mi sorprende sempre.');
+  } else if (ctx.phase === 'dusk' && !addendums.length) {
+    addendums.push('Il giorno si piega.');
+  }
+
+  if (hour >= 0 && hour < 5 && kind === 'hermit') {
+    return `${base} Vegliavo, come sempre.`;
+  }
+
+  if (addendums.length === 0) return base;
+  return `${base} ${addendums[0]}`;
+}
+
+/** NPC mood derived from persona + current weather. Drives HUD icon/color. */
+export type NPCMood = 'calm' | 'alert' | 'melancholy' | 'curious' | 'warm';
+
+export function moodFor(kind: NPCKind, weather: string, phase: string): NPCMood {
+  if (weather === 'thunderstorm') return 'alert';
+  if (weather === 'rain' || weather === 'fog') {
+    if (kind === 'poet' || kind === 'hermit') return 'melancholy';
+    if (kind === 'ranger' || kind === 'hunter') return 'alert';
+  }
+  if (phase === 'night') {
+    if (kind === 'hermit' || kind === 'storyteller') return 'warm';
+    return 'calm';
+  }
+  if (kind === 'storyteller' || kind === 'herbalist') return 'warm';
+  if (kind === 'poet') return 'curious';
+  if (kind === 'ranger' || kind === 'hunter') return 'alert';
+  return 'calm';
+}
+
+export const MOOD_META: Record<NPCMood, { icon: string; label: string; color: string }> = {
+  calm:       { icon: '◦', label: 'sereno',       color: '#8fc26a' },
+  alert:      { icon: '△', label: 'all\'erta',    color: '#d89a58' },
+  melancholy: { icon: '~', label: 'malinconico',  color: '#88b4d8' },
+  curious:    { icon: '?', label: 'curioso',      color: '#c8a4e0' },
+  warm:       { icon: '◉', label: 'accogliente',  color: '#e0b078' },
+};
+
+/** Dynamic topic suggestions that adapt to time/weather/kind. */
+export function dynamicTopics(
+  kind: NPCKind,
+  ctx: { hour: number; phase: string; weather: string },
+): string[] {
+  const profile = getTerrainAdaptedProfile(kind);
+  const base = [...profile.topics];
+  const extras: string[] = [];
+  if (ctx.weather === 'rain' || ctx.weather === 'thunderstorm') {
+    if (kind === 'herbalist') extras.push('Cosa raccogli sotto la pioggia?');
+    else if (kind === 'ranger') extras.push('Pericoli con questa pioggia?');
+    else if (kind === 'hermit') extras.push('Posso ripararmi con te?');
+    else if (kind === 'poet') extras.push('La pioggia ti ispira?');
+  } else if (ctx.weather === 'fog') {
+    extras.push('Cosa si nasconde nella nebbia?');
+  } else if (ctx.weather === 'snow') {
+    extras.push('Cosa sopravvive alla neve?');
+  }
+  if (ctx.phase === 'night') {
+    if (kind === 'hermit') extras.push('Cosa succede qui di notte?');
+    else if (kind === 'storyteller') extras.push('Una leggenda notturna?');
+    else extras.push('Non dormi mai?');
+  } else if (ctx.phase === 'dawn') {
+    extras.push('Cosa fai all\'alba?');
+  }
+  // Rotate base so it doesn't feel static: drop one and replace with extra if we have any.
+  if (extras.length && base.length >= 3) {
+    base[base.length - 1] = extras[0];
+    if (extras[1]) base.splice(1, 0, extras[1]);
+  } else {
+    base.push(...extras);
+  }
+  return base.slice(0, 4);
+}
+
+/** Tiny narrative items NPCs can give the player. Kind-themed. */
+export interface Memento {
+  id: string;       // unique instance id
+  fromNpcId: string;
+  fromKind: NPCKind;
+  fromName: string;
+  title: string;
+  description: string;
+  ts: number;
+}
+
+const MEMENTO_POOL: Record<NPCKind, { title: string; description: string }[]> = {
+  wanderer: [
+    { title: 'Pietra del cammino', description: 'Una pietra piatta, consumata dal passo di anni. Pesa poco; ricorda molto.' },
+    { title: 'Nodo di corda', description: 'Un nodo doppio, stretto bene. Si slega solo chiamandolo per nome.' },
+  ],
+  herbalist: [
+    { title: 'Foglia di salvia', description: 'Profumo caldo. Strofinala tra le dita quando non riesci a pensare.' },
+    { title: 'Radice amara', description: 'Sembra nulla, ma in infusione scioglie la stanchezza.' },
+  ],
+  ranger: [
+    { title: 'Segno di sentiero', description: 'Tre tacche su una corteccia, copiate su un frammento di legno. Indica il nord.' },
+    { title: 'Impronta di volpe', description: 'Un calco di fango secco. Prima di buttarlo, guardalo bene.' },
+  ],
+  lakeSeeker: [
+    { title: 'Ciottolo liscio', description: 'Strappato al fondo di un lago senza nome. Freddo come una domanda.' },
+    { title: 'Scheggia di specchio d\'acqua', description: 'Un pezzetto di vetro blu. Non riflette il tuo viso esattamente come lo conosci.' },
+  ],
+  poet: [
+    { title: 'Verso scritto su foglia', description: '"Ogni passo e gia scritto, / ma il bosco lo legge / un po\' alla volta."' },
+    { title: 'Penna di gazza', description: 'Dicono porti fortuna ai distratti.' },
+  ],
+  hunter: [
+    { title: 'Piuma di nibbio', description: 'Tenuta con un filo. Ricorda di guardare in alto.' },
+    { title: 'Dente di cinghiale', description: 'Piccolo, vecchio, pulito. "Rispetto", dice chi te lo da.' },
+  ],
+  hermit: [
+    { title: 'Stoppino consumato', description: 'Ha illuminato molte notti. Basta accenderlo per ricordarselo.' },
+    { title: 'Ciotola di legno', description: 'Scavata a mano. Ci cape una manciata di silenzio.' },
+  ],
+  storyteller: [
+    { title: 'Frammento di storia', description: 'Una frase senza inizio ne fine: "...e la foresta non rispose, ma si piego un poco."' },
+    { title: 'Filo rosso', description: 'Serve a non perdere il racconto mentre lo cammini.' },
+  ],
+};
+
+export function pickMemento(kind: NPCKind, npcId: string, name: string, cx: number, cz: number): Memento {
+  const pool = MEMENTO_POOL[kind];
+  const r = hash2(cx, cz, 7717);
+  const entry = pool[Math.floor(r * pool.length) % pool.length];
+  return {
+    id: `m:${npcId}:${Date.now()}`,
+    fromNpcId: npcId,
+    fromKind: kind,
+    fromName: name,
+    title: entry.title,
+    description: entry.description,
+    ts: Date.now(),
+  };
+}
+
 export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
@@ -191,6 +365,12 @@ interface NPCState {
   pending: boolean;
   error: string | null;
   devNPC: DevNPC | null; // Spawned via dev mode button
+  /** Persistent bag of mementos the player has collected. */
+  mementos: Memento[];
+  /** Counts of encounters by kind; used to vary dialog. */
+  encounters: Record<NPCKind, number>;
+  /** Whether the mementos panel is open. */
+  mementosOpen: boolean;
   setNearby: (n: ActiveNPC | null) => void;
   openDialog: (id: string) => void;
   closeDialog: () => void;
@@ -200,15 +380,28 @@ interface NPCState {
   spawnDevNPC: (npc: DevNPC) => void;
   clearDevNPC: () => void;
   updateDevNPC: (updater: (n: DevNPC) => DevNPC) => void;
+  addMemento: (m: Memento) => void;
+  hasMementoFrom: (npcId: string) => boolean;
+  incrementEncounter: (kind: NPCKind) => void;
+  openMementos: () => void;
+  closeMementos: () => void;
 }
 
-export const useNPC = create<NPCState>((set) => ({
+const EMPTY_ENCOUNTERS: Record<NPCKind, number> = {
+  wanderer: 0, herbalist: 0, ranger: 0, lakeSeeker: 0,
+  poet: 0, hunter: 0, hermit: 0, storyteller: 0,
+};
+
+export const useNPC = create<NPCState>((set, get) => ({
   nearby: null,
   dialogOpenFor: null,
   history: {},
   pending: false,
   error: null,
   devNPC: null,
+  mementos: [],
+  encounters: { ...EMPTY_ENCOUNTERS },
+  mementosOpen: false,
   setNearby: (n) =>
     set((s) => (s.nearby?.id === n?.id ? s : { ...s, nearby: n })),
   openDialog: (id) => set({ dialogOpenFor: id, error: null }),
@@ -224,6 +417,12 @@ export const useNPC = create<NPCState>((set) => ({
   clearDevNPC: () => set({ devNPC: null }),
   updateDevNPC: (updater) =>
     set((s) => (s.devNPC ? { devNPC: updater(s.devNPC) } : s)),
+  addMemento: (m) => set((s) => ({ mementos: [...s.mementos, m] })),
+  hasMementoFrom: (npcId) => get().mementos.some((m) => m.fromNpcId === npcId),
+  incrementEncounter: (kind) =>
+    set((s) => ({ encounters: { ...s.encounters, [kind]: (s.encounters[kind] ?? 0) + 1 } })),
+  openMementos: () => set({ mementosOpen: true }),
+  closeMementos: () => set({ mementosOpen: false }),
 }));
 
 /** Short human-readable world description fed to the model as context. */

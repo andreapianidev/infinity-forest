@@ -50,6 +50,11 @@ export const world = {
   snowAccumulation: 0, // Persistent snow on ground (0-1)
   _snowElapsed: 0,
   _snowDur: 0,
+  // Exploration stats
+  distanceTraveled: 0, // meters
+  sessionStartTime: Date.now(),
+  // Environmental
+  temperature: 20, // °C
 };
 
 export function phaseOf(hour: number): Phase {
@@ -641,13 +646,73 @@ export function stepCalm(dt: number) {
   world.calm += (target - world.calm) * Math.min(1, k * dt);
 }
 
+/** Calculate temperature based on altitude, season, time and weather */
+export function calculateTemperature(altitude: number, season: Season, hour: number, weather: Weather): number {
+  // Base temperature
+  let temp = 20;
+  // Altitude: -1°C per 100m
+  temp -= altitude * 0.01;
+  // Season modifier
+  const seasonMod: Record<Season, number> = { spring: 0, summer: 8, autumn: -3, winter: -10 };
+  temp += seasonMod[season] ?? 0;
+  // Time of day modifier
+  const isNight = hour < 6 || hour > 20;
+  const isNoon = hour > 11 && hour < 15;
+  if (isNight) temp -= 3;
+  else if (isNoon) temp += 2;
+  // Weather modifier
+  const weatherMod: Record<Weather, number> = { clear: 0, rain: -2, fog: -1, postRain: -1, thunderstorm: -3, snow: -8 };
+  temp += weatherMod[weather] ?? 0;
+  return Math.round(temp * 10) / 10;
+}
+
+/** Calculate moon phase (0-7) based on date */
+export function getMoonPhase(date: Date = new Date()): number {
+  let year = date.getFullYear();
+  let month = date.getMonth() + 1;
+  const day = date.getDate();
+  
+  // Simple moon phase calculation
+  let c = 0, e = 0, jd = 0, b = 0;
+  if (month < 3) { year--; month += 12; }
+  ++month;
+  c = 365.25 * year;
+  e = 30.6 * month;
+  jd = c + e + day - 694039.09;
+  jd /= 29.5305882;
+  b = Math.floor(jd);
+  jd -= b;
+  b = Math.round(jd * 8);
+  if (b >= 8) b = 0;
+  return b; // 0=new, 4=full
+}
+
+const MOON_ICONS = ['🌑', '🌒', '🌓', '🌔', '🌕', '🌖', '🌗', '🌘'];
+export function getMoonIcon(phase: number): string {
+  return MOON_ICONS[phase] ?? '🌑';
+}
+
 /** HUD-facing snapshot store (updated on an interval, not every frame). */
 interface HUDWorld {
   hour: number; phase: Phase; season: Season; weather: Weather; calm: number; rainT: number; fogT: number; postRainT: number; stormT: number; snowT: number; lightningFlash: number; altitude: number;
+  // Exploration
+  distanceTraveled: number;
+  playerSpeed: number;
+  facing: string; // N, NE, E, SE, S, SW, W, NW
+  posX: number; posZ: number;
+  // Progress
+  sessionTime: number; // seconds
+  plantsCollected: number;
+  // Environmental
+  temperature: number;
+  moonPhase: number; // 0-7
   set: (p: Partial<HUDWorld>) => void;
 }
 export const useHUDWorld = create<HUDWorld>((set) => ({
   hour: 12, phase: 'day', season: 'spring', weather: 'clear', calm: 0.2, rainT: 0, fogT: 0, postRainT: 0, stormT: 0, snowT: 0, lightningFlash: 0, altitude: 0,
+  distanceTraveled: 0, playerSpeed: 0, facing: 'N', posX: 0, posZ: 0,
+  sessionTime: 0, plantsCollected: 0,
+  temperature: 20, moonPhase: 0,
   set: (p) => set(p),
 }));
 
