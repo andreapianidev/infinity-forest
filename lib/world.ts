@@ -47,6 +47,7 @@ export const world = {
   _nextLightningIn: 0,
   // Snow state
   snowT: 0,
+  snowAccumulation: 0, // Persistent snow on ground (0-1)
   _snowElapsed: 0,
   _snowDur: 0,
 };
@@ -416,8 +417,8 @@ function pickNextWeather(): 'rain' | 'fog' | 'thunderstorm' | 'snow' {
   const terrainStormBoost = terrain === 'mountainous' ? 0.15 : terrain === 'flat' ? 0.05 : 0;
   const terrainFogBoost = terrain === 'riverlands' ? 0.2 : terrain === 'flat' ? 0.1 : 0;
   
-  // Season modifiers
-  const snowWeight = isWinter ? 0.35 + terrainSnowBoost : (isSummer ? 0 : 0.02);
+  // Season modifiers - winter has MUCH more snow
+  const snowWeight = isWinter ? 0.55 + terrainSnowBoost : (isSummer ? 0 : 0.02);
   const rainSeasonMod = isSummer ? 0.15 : isWinter ? -0.2 : 0;
   const stormSeasonMod = isSummer ? 0.1 : isWinter ? -0.1 : 0;
   
@@ -458,6 +459,11 @@ export function stepWeather(dt: number) {
     world.fogT = Math.max(0, world.fogT - dt * 0.22);
     world.stormT = Math.max(0, world.stormT - dt * 0.3);
     world.lightningFlash = Math.max(0, world.lightningFlash - dt * 4);
+    world.snowT = 0; // Stop snowfall immediately when clearing
+    // Melt accumulated snow during clear weather
+    const isWinter = world.season === 'winter';
+    const meltRate = isWinter ? 0.02 : 0.08; // slower melt in winter, faster in other seasons
+    world.snowAccumulation = Math.max(0, world.snowAccumulation - meltRate * dt);
     if (world.rainT <= 0.01 && world.fogT <= 0.01 && world.stormT <= 0.01) {
       world.weather = 'clear';
       world.rainT = 0;
@@ -473,6 +479,7 @@ export function stepWeather(dt: number) {
     world.weather = 'rain';
     world.rainT = Math.min(1, world.rainT + dt * 0.25);
     world.fogT = Math.max(0, world.fogT - dt * 0.25);
+    world.snowT = 0; // Stop snowfall when switching to rain
     world.postRainT = 0;
     return;
   }
@@ -482,6 +489,7 @@ export function stepWeather(dt: number) {
     world.fogT = Math.min(1, world.fogT + dt * 0.22);
     world.rainT = Math.max(0, world.rainT - dt * 0.3);
     world.stormT = Math.max(0, world.stormT - dt * 0.35);
+    world.snowT = 0; // Stop snowfall when switching to fog
     world.postRainT = 0;
     return;
   }
@@ -489,8 +497,8 @@ export function stepWeather(dt: number) {
   if (mode === 'thunderstorm') {
     world.weather = 'thunderstorm';
     world.stormT = Math.min(1, world.stormT + dt * 0.2);
-    world.rainT = Math.max(world.rainT, world.stormT * 0.95);
-    world.snowT = Math.max(0, world.snowT - dt * 0.4);
+    world.rainT = Math.max(0, world.rainT + dt * 0.1);
+    world.snowT = 0; // Stop snowfall during thunderstorm
     world.fogT = Math.max(0, world.fogT - dt * 0.25);
     world.postRainT = 0;
     return;
@@ -555,6 +563,9 @@ export function stepWeather(dt: number) {
     const ramp = Math.min(e / 10, 1);
     const tail = e > d ? Math.max(0, 1 - (e - d) / 10) : 1;
     world.snowT = Math.min(ramp, tail);
+    // Accumulate snow on ground during snowfall
+    const accumRate = 0.15 * world.snowT; // accumulation speed
+    world.snowAccumulation = Math.min(1, world.snowAccumulation + accumRate * dt);
     world.rainT = Math.max(0, world.rainT - dt * 0.4);
     world.stormT = Math.max(0, world.stormT - dt * 0.35);
     world.fogT = Math.max(0, world.fogT - dt * 0.25);
@@ -605,6 +616,14 @@ export function stepWeather(dt: number) {
       scheduleNextWeather(100 + Math.random() * 120);
     }
   }
+
+  // General snow melt when not snowing - rain melts snow faster
+  if (world.weather !== 'snow' && world.snowAccumulation > 0) {
+    const isWinter = world.season === 'winter';
+    const raining = world.weather === 'rain' || world.weather === 'thunderstorm';
+    const meltRate = raining ? (isWinter ? 0.05 : 0.12) : (isWinter ? 0.02 : 0.08);
+    world.snowAccumulation = Math.max(0, world.snowAccumulation - meltRate * dt);
+  }
 }
 
 /**
@@ -624,11 +643,11 @@ export function stepCalm(dt: number) {
 
 /** HUD-facing snapshot store (updated on an interval, not every frame). */
 interface HUDWorld {
-  hour: number; phase: Phase; season: Season; weather: Weather; calm: number; rainT: number; fogT: number; postRainT: number; stormT: number; snowT: number; lightningFlash: number;
+  hour: number; phase: Phase; season: Season; weather: Weather; calm: number; rainT: number; fogT: number; postRainT: number; stormT: number; snowT: number; lightningFlash: number; altitude: number;
   set: (p: Partial<HUDWorld>) => void;
 }
 export const useHUDWorld = create<HUDWorld>((set) => ({
-  hour: 12, phase: 'day', season: 'spring', weather: 'clear', calm: 0.2, rainT: 0, fogT: 0, postRainT: 0, stormT: 0, snowT: 0, lightningFlash: 0,
+  hour: 12, phase: 'day', season: 'spring', weather: 'clear', calm: 0.2, rainT: 0, fogT: 0, postRainT: 0, stormT: 0, snowT: 0, lightningFlash: 0, altitude: 0,
   set: (p) => set(p),
 }));
 

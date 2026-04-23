@@ -6,11 +6,11 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import { heightAt, hash2, forestDensity, sampledHeight, CHUNK_SIZE, TERRAIN_RES, TERRAIN_TYPE, isRiver, getRiverDepth } from '@/lib/noise';
 import { PlayerState } from './Player';
 import { useGame, PlantKind, plantAvailable } from '@/lib/store';
-import { world, WATER_LEVEL, nearWater } from '@/lib/world';
+import { world, WATER_LEVEL, nearWater, Season } from '@/lib/world';
 
 // ─────────── Terrain ───────────
 
-function buildTerrainGeometry(cx: number, cz: number): THREE.BufferGeometry {
+function buildTerrainGeometry(cx: number, cz: number, season: Season = 'spring'): THREE.BufferGeometry {
   const geom = new THREE.PlaneGeometry(CHUNK_SIZE, CHUNK_SIZE, TERRAIN_RES, TERRAIN_RES);
   geom.rotateX(-Math.PI / 2);
   const pos = geom.attributes.position as THREE.BufferAttribute;
@@ -18,6 +18,7 @@ function buildTerrainGeometry(cx: number, cz: number): THREE.BufferGeometry {
   
   // Volcanic terrain uses black/ash colors instead of green
   const isVolcanic = TERRAIN_TYPE === 'volcanic';
+  const isWinter = season === 'winter';
   const grassA = new THREE.Color(isVolcanic ? '#2a2520' : '#5a8f3e');
   const grassB = new THREE.Color(isVolcanic ? '#1a1815' : '#2e4e22');
   const grassDry = new THREE.Color(isVolcanic ? '#3a3530' : '#8a9240');
@@ -40,8 +41,8 @@ function buildTerrainGeometry(cx: number, cz: number): THREE.BufferGeometry {
     if (y < WATER_LEVEL + 0.6) c.lerp(sand, THREE.MathUtils.clamp((WATER_LEVEL + 0.6 - y) / 0.7, 0, 1));
     // Rock on heights (more prominent in volcanic)
     if (y > 3 || isVolcanic) c.lerp(rock, THREE.MathUtils.clamp((y - 3) / (isVolcanic ? 1.5 : 3), 0, isVolcanic ? 0.9 : 1));
-    // Snow on very high peaks
-    if (y > 5.5) c.lerp(snow, THREE.MathUtils.clamp((y - 5.5) / 1.5, 0, 1));
+    // Snow on very high peaks - ONLY in winter
+    if (isWinter && y > 5.5) c.lerp(snow, THREE.MathUtils.clamp((y - 5.5) / 1.5, 0, 1));
     // Volcanic: add extra ash/cinder variation
     if (isVolcanic) {
       const ash = hash2(Math.floor(x), Math.floor(z), 31);
@@ -1186,7 +1187,7 @@ function useInstancedFill(
 }
 
 export function Chunk({ cx, cz, playerRef }: { cx: number; cz: number; playerRef: React.MutableRefObject<PlayerState> }) {
-  const geom = useMemo(() => buildTerrainGeometry(cx, cz), [cx, cz]);
+  const geom = useMemo(() => buildTerrainGeometry(cx, cz, world.season), [cx, cz, world.season]);
   const riverGeom = useMemo(() => buildRiverGeometry(cx, cz), [cx, cz]);
   const trees = useMemo(() => treesForChunk(cx, cz), [cx, cz]);
   const coniferTrees = useMemo(() => trees.filter((t) => t.kind === 0), [trees]);
@@ -1359,12 +1360,16 @@ export function Chunk({ cx, cz, playerRef }: { cx: number; cz: number; playerRef
       else if (!isNear && nearbyId === b.id) setNearby(null, null);
     }
 
-    // Update snow coverage uniform on terrain material
+    // Update snow accumulation and season uniforms on terrain material
     const terrainMat = terrainMatRef.current;
     if (terrainMat) {
       const shader = (terrainMat.userData as any).shader;
-      if (shader && shader.uniforms.uSnowT) {
-        shader.uniforms.uSnowT.value = world.snowT;
+      if (shader) {
+        // Use persistent snow accumulation (ground patches) instead of falling snow intensity
+        if (shader.uniforms.uSnowAccumulation) shader.uniforms.uSnowAccumulation.value = world.snowAccumulation;
+        // Map season to int: 0=spring, 1=summer, 2=autumn, 3=winter
+        const seasonMap: Record<string, number> = { spring: 0, summer: 1, autumn: 2, winter: 3 };
+        if (shader.uniforms.uSeason) shader.uniforms.uSeason.value = seasonMap[world.season] ?? 0;
       }
     }
   });
@@ -1383,21 +1388,40 @@ export function Chunk({ cx, cz, playerRef }: { cx: number; cz: number; playerRef
             if (mat && !(mat.userData as any).snowSetup) {
               (mat.userData as any).snowSetup = true;
               mat.onBeforeCompile = (shader) => {
-                shader.uniforms.uSnowT = { value: world.snowT };
+                shader.uniforms.uSnowAccumulation = { value: 0 }; // Persistent snow on ground
+                shader.uniforms.uSeason = { value: 0 }; // 0=spring, 1=summer, 2=autumn, 3=winter
                 (mat.userData as any).shader = shader;
+                // Pass world position from vertex to fragment
+                shader.vertexShader = `
+                  varying vec3 vWorldPosition;
+                ` + shader.vertexShader.replace(
+                  '#include <worldpos_vertex>',
+                  `
+                  #include <worldpos_vertex>
+                  vWorldPosition = (modelMatrix * vec4(transformed, 1.0)).xyz;
+                  `
+                );
                 shader.fragmentShader = `
-                  uniform float uSnowT;
+                  uniform float uSnowAccumulation;
+                  uniform int uSeason;
+                  varying vec3 vWorldPosition;
                 ` + shader.fragmentShader.replace(
                   '#include <color_fragment>',
                   `
                   #include <color_fragment>
-                  // Snow coverage: blend towards white based on snow intensity
-                  float snowCover = uSnowT * 0.9;
+                  // Snow coverage: persistent accumulation that fades after snowfall
+                  // Only in winter (season 3), with elevation-based distribution
+                  float seasonFactor = (uSeason == 3) ? 1.0 : 0.0;
+                  float heightFactor = smoothstep(1.0, 4.5, vWorldPosition.y);
+                  // Patchy snow distribution using world position noise
+                  float patchNoise = sin(vWorldPosition.x * 0.5) * cos(vWorldPosition.z * 0.3) * 0.5 + 0.5;
+                  float patchFactor = smoothstep(0.3, 0.8, patchNoise); // creates patchy coverage
+                  float snowCover = uSnowAccumulation * 0.95 * heightFactor * seasonFactor * patchFactor;
                   diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.94, 0.96, 0.98), snowCover);
-                  // Add sparkle effect to snow
-                  if (uSnowT > 0.3) {
+                  // Add sparkle effect to snow at higher elevations
+                  if (uSnowAccumulation > 0.2 && vWorldPosition.y > 2.0 && uSeason == 3) {
                     float sparkle = sin(vViewPosition.x * 20.0) * sin(vViewPosition.z * 20.0) * 0.5 + 0.5;
-                    diffuseColor.rgb += vec3(sparkle * uSnowT * 0.03);
+                    diffuseColor.rgb += vec3(sparkle * uSnowAccumulation * heightFactor * 0.04);
                   }
                   `
                 );

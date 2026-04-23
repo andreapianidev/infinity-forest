@@ -127,6 +127,7 @@ export function HUD({ locked }: { locked: boolean }) {
   const devMode = useSettings((s) => s.devMode);
   const setDevMode = useSettings((s) => s.setDevMode);
   const weatherLevel = weather === 'rain' ? rainT : weather === 'fog' ? fogT : weather === 'snow' ? snowT : 0;
+  const altitude = useHUDWorld((s) => s.altitude);
 
   // Get current season (auto from real time or manual)
   const season = useHUDWorld((s) => s.season);
@@ -179,6 +180,7 @@ export function HUD({ locked }: { locked: boolean }) {
           <div className="panel world-info">
             <div className="clock">{fmtTime(hour)} · {PHASE_LABEL[phase] ?? phase}</div>
             <div className="season">{effectiveSeason.charAt(0).toUpperCase() + effectiveSeason.slice(1)}</div>
+            <div className="altitude">⛰️ {altitude.toFixed(1)}m</div>
             {realtimeClock && (() => {
               const sunset = getLocalSunsetTime();
               return (

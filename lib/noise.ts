@@ -231,33 +231,32 @@ const TERRAIN_PARAMS: Record<TerrainType, {
       return ridge > 0.7 ? (ridge - 0.7) * 4 : 0;
     },
   },
-  // Tall mountains, dramatic elevation
+  // Tall mountains, dramatic elevation - FEWER LAKES (water flows downhill)
   mountainous: {
     baseline: 3.2,
     baseAmp: 12.0, baseFreq: 0.006,
     hillsAmp: 4.0, hillsFreq: 0.025,
     detailAmp: 0.6, detailFreq: 0.1,
-    lakeThresholdLow: 0.65, lakeThresholdHigh: 0.82,
-    lakeCarveDepth: 6.0, lakeFlatten: 0.5,
+    lakeThresholdLow: 0.78, lakeThresholdHigh: 0.92, // Fewer lakes at high elevation
+    lakeCarveDepth: 4.0, lakeFlatten: 0.4,
     extra: (x, z, h) => {
       // Sharp peaks using ridged noise
       const ridged = 1 - Math.abs(terrainNoise(x * 0.005, z * 0.005));
       return Math.pow(ridged, 2) * 8;
     },
   },
-  // Dark, rough terrain with jagged features
+  // Dark, rough terrain with jagged features - NO LAKES (volcanic terrain is dry and elevated)
   volcanic: {
     baseline: 2.4,
     baseAmp: 5.5, baseFreq: 0.015,
     hillsAmp: 3.0, hillsFreq: 0.04,
     detailAmp: 0.8, detailFreq: 0.2,
-    lakeThresholdLow: 0.75, lakeThresholdHigh: 0.9, // Fewer lakes
-    lakeCarveDepth: 3.0, lakeFlatten: 0.8,
+    lakeThresholdLow: 1.0, lakeThresholdHigh: 1.1, // NO LAKES - threshold never reached
+    lakeCarveDepth: 0, lakeFlatten: 0,
     extra: (x, z, h) => {
-      // Add roughness and occasional lava basins
+      // Add roughness - no water basins in volcanic terrain
       const rough = detailNoise(x * 0.08, z * 0.08) * 1.5;
-      const basin = smoothstep(0.6, 0.9, lakeNoise(x * 0.02, z * 0.02));
-      return rough - basin * 2;
+      return rough;
     },
   },
   // Flat terrain with many rivers and lakes

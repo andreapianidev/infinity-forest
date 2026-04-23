@@ -1,15 +1,30 @@
 'use client';
-import { useRef, useMemo } from 'react';
+import { useRef, useMemo, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { world } from '@/lib/world';
 import { TERRAIN_TYPE } from '@/lib/noise';
 import { PlayerState } from './Player';
 
-const MAX = 1800;
-const RADIUS = 28;
-const HEIGHT = 22;
-const MIST_COUNT = 14;
+const MAX_PARTICLES = 2000;
+const RADIUS = 32;
+const HEIGHT = 25;
+const MIST_COUNT = 18;
+
+// Wind state - shared globally for all weather effects
+export interface WindState {
+  x: number;
+  z: number;
+  strength: number;
+  direction: number; // radians
+}
+
+export const globalWind: WindState = {
+  x: 0,
+  z: 0,
+  strength: 0.3,
+  direction: 0,
+};
 
 export function Weather({ playerRef }: { playerRef: React.MutableRefObject<PlayerState> }) {
   const ref = useRef<THREE.Points>(null);
@@ -17,9 +32,9 @@ export function Weather({ playerRef }: { playerRef: React.MutableRefObject<Playe
   const mistRef = useRef<THREE.Group>(null);
 
   const { positions, velocities } = useMemo(() => {
-    const p = new Float32Array(MAX * 3);
-    const v = new Float32Array(MAX);
-    for (let i = 0; i < MAX; i++) {
+    const p = new Float32Array(MAX_PARTICLES * 3);
+    const v = new Float32Array(MAX_PARTICLES);
+    for (let i = 0; i < MAX_PARTICLES; i++) {
       p[i * 3] = (Math.random() - 0.5) * RADIUS * 2;
       p[i * 3 + 1] = Math.random() * HEIGHT;
       p[i * 3 + 2] = (Math.random() - 0.5) * RADIUS * 2;
@@ -43,9 +58,9 @@ export function Weather({ playerRef }: { playerRef: React.MutableRefObject<Playe
 
   // Separate snow positions for snow effect
   const { snowPositions, snowVelocities } = useMemo(() => {
-    const p = new Float32Array(MAX * 3);
-    const v = new Float32Array(MAX);
-    for (let i = 0; i < MAX; i++) {
+    const p = new Float32Array(MAX_PARTICLES * 3);
+    const v = new Float32Array(MAX_PARTICLES);
+    for (let i = 0; i < MAX_PARTICLES; i++) {
       p[i * 3] = (Math.random() - 0.5) * RADIUS * 2;
       p[i * 3 + 1] = Math.random() * HEIGHT;
       p[i * 3 + 2] = (Math.random() - 0.5) * RADIUS * 2;
@@ -69,31 +84,58 @@ export function Weather({ playerRef }: { playerRef: React.MutableRefObject<Playe
   const snowRef = useRef<THREE.Points>(null);
   const snowMatRef = useRef<THREE.PointsMaterial>(null);
 
-  useFrame((_, dt) => {
+  // Wind evolution over time
+  const windTime = useRef(0);
+  
+  useFrame((state, dt) => {
     dt = Math.min(dt, 0.05);
+    const now = state.clock.elapsedTime;
+    windTime.current += dt;
+    
     const rain = world.rainT;
     const snow = world.snowT;
     const fog = world.fogT;
     const localMoisture = world.localMoisture;
     const pp = playerRef.current.position;
     
-    // Rain rendering
+    // Update global wind - evolves over time for dynamic weather
+    globalWind.direction += (Math.random() - 0.5) * dt * 0.1; // Slow direction change
+    globalWind.strength = 0.2 + rain * 0.4 + snow * 0.3; // Stronger wind during precipitation
+    globalWind.x = Math.cos(globalWind.direction) * globalWind.strength;
+    globalWind.z = Math.sin(globalWind.direction) * globalWind.strength;
+    
+    // Rain rendering with wind and ground collision
     if (ref.current && matRef.current) {
-      ref.current.visible = rain > 0.01 && snow < 0.1; // Hide rain during snow
+      ref.current.visible = rain > 0.01 && snow < 0.1;
       if (rain > 0.01 && snow < 0.1) {
-        matRef.current.opacity = Math.min(0.7, 0.2 + rain * 0.6);
-        const count = Math.floor(MAX * rain);
+        matRef.current.opacity = Math.min(0.75, 0.15 + rain * 0.65);
+        const count = Math.floor(MAX_PARTICLES * rain);
         const attr = ref.current.geometry.attributes.position as THREE.BufferAttribute;
         const arr = attr.array as Float32Array;
+        
+        // Rain falls fast, pushed by wind
+        const windForce = globalWind.strength * 2;
+        const windDriftX = globalWind.x * dt * 3;
+        const windDriftZ = globalWind.z * dt * 3;
+        
         for (let i = 0; i < count; i++) {
-          arr[i * 3 + 1] -= velocities[i] * dt;
+          // Fall speed varies by droplet size
+          const fallSpeed = velocities[i] * (1 + windForce * 0.3);
+          arr[i * 3 + 1] -= fallSpeed * dt;
+          
+          // Wind affects rain trajectory
+          arr[i * 3] += windDriftX + (Math.random() - 0.5) * 0.1;
+          arr[i * 3 + 2] += windDriftZ + (Math.random() - 0.5) * 0.1;
+          
+          // Ground collision - respawn when hitting ground
           if (arr[i * 3 + 1] < -2) {
             arr[i * 3] = pp.x + (Math.random() - 0.5) * RADIUS * 2;
             arr[i * 3 + 1] = pp.y + HEIGHT * (0.5 + Math.random() * 0.5);
             arr[i * 3 + 2] = pp.z + (Math.random() - 0.5) * RADIUS * 2;
           }
-          arr[i * 3] += dt * 1.5;
         }
+        
+        // Wrap around player for infinite rain effect
         for (let i = 0; i < count; i++) {
           const dx = arr[i * 3] - pp.x;
           const dz = arr[i * 3 + 2] - pp.z;
@@ -104,29 +146,42 @@ export function Weather({ playerRef }: { playerRef: React.MutableRefObject<Playe
       }
     }
     
-    // Snow rendering
+    // Enhanced Snow rendering with turbulence and sparkle
     if (snowRef.current && snowMatRef.current) {
       snowRef.current.visible = snow > 0.01;
       if (snow > 0.01) {
-        // Terrain affects snow density - mountains get more
         const terrainMultiplier = TERRAIN_TYPE === 'mountainous' ? 1.3 : TERRAIN_TYPE === 'hilly' ? 1.1 : 1.0;
-        snowMatRef.current.opacity = Math.min(0.9, 0.3 + snow * 0.5 * terrainMultiplier);
-        snowMatRef.current.size = 0.12 + snow * 0.08; // Larger flakes during heavy snow
+        snowMatRef.current.opacity = Math.min(0.95, 0.25 + snow * 0.55 * terrainMultiplier);
+        // Larger flakes during heavy snow + wind effect on size
+        snowMatRef.current.size = 0.1 + snow * 0.1 + globalWind.strength * 0.05;
         
-        const count = Math.floor(MAX * snow * terrainMultiplier);
+        const count = Math.floor(MAX_PARTICLES * snow * terrainMultiplier);
         const attr = snowRef.current.geometry.attributes.position as THREE.BufferAttribute;
         const arr = attr.array as Float32Array;
         
-        // Snow falls slower with more drift
-        const windX = Math.sin(performance.now() * 0.0005) * 0.5; // Gentle swaying
-        const windZ = Math.cos(performance.now() * 0.0003) * 0.3;
+        // Snow physics: slow fall, turbulence, wind drift
+        const turbulenceScale = 0.3 + globalWind.strength * 0.5;
+        const windX = globalWind.x * 1.5;
+        const windZ = globalWind.z * 1.5;
         
         for (let i = 0; i < count; i++) {
-          // Slower fall + wind drift
-          arr[i * 3 + 1] -= snowVelocities[i] * dt * (0.5 + Math.random() * 0.3);
-          arr[i * 3] += (windX + Math.sin(i * 0.1 + performance.now() * 0.001) * 0.3) * dt;
-          arr[i * 3 + 2] += (windZ + Math.cos(i * 0.1 + performance.now() * 0.001) * 0.2) * dt;
+          const t = now + i * 0.1; // Phase offset per flake
           
+          // Very slow fall with variation
+          const fallSpeed = snowVelocities[i] * (0.3 + Math.random() * 0.2);
+          arr[i * 3 + 1] -= fallSpeed * dt;
+          
+          // Turbulence - swirling motion simulating air currents
+          const turbX = Math.sin(t * 0.5) * Math.cos(t * 0.3) * turbulenceScale;
+          const turbZ = Math.cos(t * 0.4) * Math.sin(t * 0.6) * turbulenceScale;
+          const turbY = Math.sin(t * 0.8) * 0.1; // Slight vertical bob
+          
+          // Wind + turbulence
+          arr[i * 3] += (windX + turbX) * dt;
+          arr[i * 3 + 2] += (windZ + turbZ) * dt;
+          arr[i * 3 + 1] += turbY * dt;
+          
+          // Ground collision
           if (arr[i * 3 + 1] < -1) {
             arr[i * 3] = pp.x + (Math.random() - 0.5) * RADIUS * 2;
             arr[i * 3 + 1] = pp.y + HEIGHT * (0.5 + Math.random() * 0.5);
@@ -145,65 +200,171 @@ export function Weather({ playerRef }: { playerRef: React.MutableRefObject<Playe
       }
     }
 
+    // Enhanced Volumetric Fog with depth variation
     if (mistRef.current) {
       mistRef.current.visible = fog > 0.01;
       for (let i = 0; i < mist.length; i++) {
         const child = mistRef.current.children[i] as THREE.Mesh | undefined;
         if (!child) continue;
         const item = mist[i];
-        const a = item.angle + item.phase + performance.now() * 0.00003 + dt * item.drift;
+        
+        // Fog moves with wind
+        const windOffsetX = globalWind.x * 2 * windTime.current;
+        const windOffsetZ = globalWind.z * 2 * windTime.current;
+        
+        const a = item.angle + item.phase + now * 0.00003 + dt * item.drift;
         const wetness = 0.45 + localMoisture * 0.95;
+        
+        // Volumetric fog - denser near ground, varies with distance
+        const distFromCenter = item.radius / 26; // 0-1
+        const heightFactor = 1 - distFromCenter * 0.3; // Lower fog further out
+        
         child.position.set(
-          pp.x + Math.cos(a) * item.radius * (1.05 - localMoisture * 0.22),
-          pp.y - 1.15 + item.height * (0.85 + (1 - localMoisture) * 0.3) + Math.sin(a * 1.7) * 0.35,
-          pp.z + Math.sin(a) * item.radius * (0.82 - localMoisture * 0.08),
+          pp.x + Math.cos(a) * item.radius * (1.05 - localMoisture * 0.22) + windOffsetX * 0.1,
+          pp.y - 1.5 + item.height * heightFactor * (0.85 + (1 - localMoisture) * 0.3) + Math.sin(a * 1.7) * 0.35,
+          pp.z + Math.sin(a) * item.radius * (0.82 - localMoisture * 0.08) + windOffsetZ * 0.1,
         );
         child.quaternion.copy((child.parent as THREE.Object3D).quaternion);
         child.lookAt(pp.x, child.position.y, pp.z);
-        child.scale.set(item.scale * wetness, item.scale * (0.32 + localMoisture * 0.22), 1);
+        
+        // Scale varies with moisture and wind
+        const windScale = 1 + globalWind.strength * 0.2;
+        child.scale.set(item.scale * wetness * windScale, item.scale * (0.32 + localMoisture * 0.22) * windScale, 1);
+        
         const material = child.material as THREE.MeshBasicMaterial;
-        material.opacity = 0.035 + fog * (0.1 + localMoisture * 0.12);
+        // Fog color shifts with weather - bluish in rain, gray in fog, warm in clear
+        const fogOpacity = 0.04 + fog * (0.12 + localMoisture * 0.15);
+        material.opacity = Math.min(0.35, fogOpacity);
       }
     }
   });
 
   return (
     <>
-      {/* Rain particles */}
+      {/* Rain particles - stretched for streak effect in wind */}
       <points ref={ref} geometry={geom} frustumCulled={false}>
         <pointsMaterial
           ref={matRef}
-          color="#a8c0d8"
-          size={0.08}
+          color="#b0c8e0"
+          size={0.06}
           sizeAttenuation
           transparent
-          opacity={0.4}
+          opacity={0.55}
           depthWrite={false}
+          blending={THREE.AdditiveBlending}
         />
       </points>
       
-      {/* Snow particles */}
+      {/* Snow particles - soft glowing flakes */}
       <points ref={snowRef} geometry={snowGeom} frustumCulled={false}>
         <pointsMaterial
           ref={snowMatRef}
-          color="#f0f4f8"
-          size={0.12}
+          color="#ffffff"
+          size={0.14}
           sizeAttenuation
           transparent
-          opacity={0.5}
+          opacity={0.7}
           depthWrite={false}
+          blending={THREE.AdditiveBlending}
         />
       </points>
       
-      {/* Fog mist */}
+      {/* Fog mist - volumetric with soft edges */}
       <group ref={mistRef}>
         {mist.map((item, i) => (
           <mesh key={i} frustumCulled={false} position={[0, item.height, 0]}>
             <planeGeometry args={[1, 1, 1, 1]} />
-            <meshBasicMaterial color="#e7efec" transparent opacity={0.08} depthWrite={false} side={THREE.DoubleSide} />
+            <meshBasicMaterial 
+              color="#d8e2e6" 
+              transparent 
+              opacity={0.12} 
+              depthWrite={false} 
+              side={THREE.DoubleSide}
+              blending={THREE.MultiplyBlending}
+            />
           </mesh>
         ))}
       </group>
+      
+      {/* Ground splash effects when raining */}
+      <RainSplashes playerRef={playerRef} />
     </>
+  );
+}
+
+// Rain splash effect component - creates small splashes on ground
+function RainSplashes({ playerRef }: { playerRef: React.MutableRefObject<PlayerState> }) {
+  const splashRef = useRef<THREE.Points>(null);
+  const MAX_SPLASHES = 60;
+  
+  const { splashPositions, splashAges } = useMemo(() => {
+    const positions = new Float32Array(MAX_SPLASHES * 3);
+    const ages = new Float32Array(MAX_SPLASHES);
+    for (let i = 0; i < MAX_SPLASHES; i++) {
+      positions[i * 3] = 0;
+      positions[i * 3 + 1] = -100; // Hidden initially
+      positions[i * 3 + 2] = 0;
+      ages[i] = 0;
+    }
+    return { splashPositions: positions, splashAges: ages };
+  }, []);
+  
+  const splashGeom = useMemo(() => {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(splashPositions, 3));
+    return g;
+  }, [splashPositions]);
+  
+  const splashMatRef = useRef<THREE.PointsMaterial>(null);
+  
+  useFrame((_, dt) => {
+    const rain = world.rainT;
+    const snow = world.snowT;
+    
+    if (splashRef.current && splashMatRef.current) {
+      splashRef.current.visible = rain > 0.3 && snow < 0.1;
+      if (rain > 0.3 && snow < 0.1) {
+        splashMatRef.current.opacity = Math.min(0.6, rain * 0.8);
+        const attr = splashRef.current.geometry.attributes.position as THREE.BufferAttribute;
+        const arr = attr.array as Float32Array;
+        const pp = playerRef.current.position;
+        
+        // Age splashes and spawn new ones
+        for (let i = 0; i < MAX_SPLASHES; i++) {
+          splashAges[i] -= dt * 2; // Fade out speed
+          
+          // Respawn if old enough and chance based on rain intensity
+          if (splashAges[i] <= 0 && Math.random() < rain * 0.1) {
+            const angle = Math.random() * Math.PI * 2;
+            const radius = Math.random() * 15; // Within 15m radius
+            splashAges[i] = 1.0; // Full life
+            arr[i * 3] = pp.x + Math.cos(angle) * radius;
+            arr[i * 3 + 1] = -0.1; // Just above ground
+            arr[i * 3 + 2] = pp.z + Math.sin(angle) * radius;
+          }
+          
+          // Hide if dead
+          if (splashAges[i] <= 0) {
+            arr[i * 3 + 1] = -100;
+          }
+        }
+        attr.needsUpdate = true;
+      }
+    }
+  });
+  
+  return (
+    <points ref={splashRef} geometry={splashGeom} frustumCulled={false}>
+      <pointsMaterial
+        ref={splashMatRef}
+        color="#c0d4e8"
+        size={0.25}
+        sizeAttenuation
+        transparent
+        opacity={0.5}
+        depthWrite={false}
+        blending={THREE.AdditiveBlending}
+      />
+    </points>
   );
 }

@@ -26,7 +26,7 @@ import {
   getRealSeason,
 } from '@/lib/world';
 
-import { CHUNK_SIZE, lakeMask, sampledHeight } from '@/lib/noise';
+import { CHUNK_SIZE, lakeMask, sampledHeight, heightAt } from '@/lib/noise';
 // 5×5 = 25 chunks loaded around the player (≈320m × 320m). This is the
 // sweet spot for perf: denser per-chunk generation fills the forest visually
 // while instanced draw-call count stays bounded. Fog masks the far edge.
@@ -125,7 +125,9 @@ function WorldTick({ playerRef }: { playerRef: React.MutableRefObject<PlayerStat
     hudTimer.current += dt;
     if (hudTimer.current > 0.2) {
       hudTimer.current = 0;
-      hudSet({ hour: world.hour, phase: world.phase, season: world.season, weather: world.weather, calm: world.calm, rainT: world.rainT, fogT: world.fogT, postRainT: world.postRainT, stormT: world.stormT, snowT: world.snowT, lightningFlash: world.lightningFlash });
+      const pp = playerRef.current.position;
+      const altitude = heightAt(pp.x, pp.z);
+      hudSet({ hour: world.hour, phase: world.phase, season: world.season, weather: world.weather, calm: world.calm, rainT: world.rainT, fogT: world.fogT, postRainT: world.postRainT, stormT: world.stormT, snowT: world.snowT, lightningFlash: world.lightningFlash, altitude });
       const nowShowStars = world.hour > 20 || world.hour < 6;
       if (nowShowStars !== showStars) setShowStars(nowShowStars);
     }

@@ -1,13 +1,8 @@
 import { NextResponse } from 'next/server';
 
-<<<<<<< Updated upstream
-// Personal-use key — kept server-side so it never ships in the client bundle.
-const DEEPSEEK_API_KEY = 'DEEPSEEK_API_KEY_PLACEHOLDER';
-=======
 // API key loaded from environment variable (.env.local)
 // Get your key at https://platform.deepseek.com/
 const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY ?? '';
->>>>>>> Stashed changes
 const DEEPSEEK_URL = 'https://api.deepseek.com/chat/completions';
 
 export const runtime = 'nodejs';
