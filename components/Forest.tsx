@@ -4,7 +4,7 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { PointerLockControls, Stars } from '@react-three/drei';
 import * as THREE from 'three';
 import { Player, PlayerState } from './Player';
-import { Chunk, WIND_MATERIALS } from './Chunk';
+import { Chunk, WIND_MATERIALS, updateFoliageSeason } from './Chunk';
 import { Animals } from './Animals';
 import { HUD } from './HUD';
 import { NPCs } from './NPCs';
@@ -27,6 +27,7 @@ import {
   getRealSeason,
   calculateTemperature,
   getMoonPhase,
+  type Season,
 } from '@/lib/world';
 
 import { CHUNK_SIZE, lakeMask, sampledHeight, heightAt, WORLD_SEED } from '@/lib/noise';
@@ -63,6 +64,7 @@ function WorldTick({ playerRef }: { playerRef: React.MutableRefObject<PlayerStat
   const hudTimer = useRef(0);
   const [showStars, setShowStars] = useState(false);
   const lastPos = useRef<THREE.Vector3 | null>(null);
+  const lastSeason = useRef<Season>(world.season);
 
   useEffect(() => {
     gl.toneMapping = THREE.ACESFilmicToneMapping;
@@ -77,6 +79,13 @@ function WorldTick({ playerRef }: { playerRef: React.MutableRefObject<PlayerStat
     world.phase = phaseOf(world.hour);
     // Season sync: auto = from real date, or manual selection
     world.season = seasonMode === 'auto' ? getRealSeason() : seasonMode;
+    
+    // Update foliage colors when season changes
+    if (world.season !== lastSeason.current) {
+      updateFoliageSeason(world.season);
+      lastSeason.current = world.season;
+    }
+    
     const pp = playerRef.current.position;
     
     // Track distance traveled

@@ -10,6 +10,14 @@ import { world, WATER_LEVEL, nearWater, Season } from '@/lib/world';
 
 // ─────────── Terrain ───────────
 
+// Seasonal terrain colors - distinct palettes for each season
+const SEASONAL_TERRAIN_COLORS: Record<Season, { grassA: string; grassB: string; grassDry: string; dirt: string; sand: string; rock: string }> = {
+  spring: { grassA: '#6abf4a', grassB: '#4a8f32', grassDry: '#8ac460', dirt: '#6a5a38', sand: '#d4c890', rock: '#7a7a72' },
+  summer: { grassA: '#5a9f30', grassB: '#3a6f20', grassDry: '#a0a840', dirt: '#5a4a28', sand: '#c9b882', rock: '#72726a' },
+  autumn: { grassA: '#8a9a3a', grassB: '#6a5a28', grassDry: '#c8a040', dirt: '#5a4a2a', sand: '#c4b078', rock: '#7a726a' },
+  winter: { grassA: '#4a5a40', grassB: '#3a4a35', grassDry: '#5a6a50', dirt: '#4a5045', sand: '#b8c0c0', rock: '#6a7068' },
+};
+
 function buildTerrainGeometry(cx: number, cz: number, season: Season = 'spring'): THREE.BufferGeometry {
   const geom = new THREE.PlaneGeometry(CHUNK_SIZE, CHUNK_SIZE, TERRAIN_RES, TERRAIN_RES);
   geom.rotateX(-Math.PI / 2);
@@ -19,13 +27,24 @@ function buildTerrainGeometry(cx: number, cz: number, season: Season = 'spring')
   // Volcanic terrain uses black/ash colors instead of green
   const isVolcanic = TERRAIN_TYPE === 'volcanic';
   const isWinter = season === 'winter';
-  const grassA = new THREE.Color(isVolcanic ? '#2a2520' : '#5a8f3e');
-  const grassB = new THREE.Color(isVolcanic ? '#1a1815' : '#2e4e22');
-  const grassDry = new THREE.Color(isVolcanic ? '#3a3530' : '#8a9240');
-  const dirt = new THREE.Color(isVolcanic ? '#4a4035' : '#6a4a28');
-  const sand = new THREE.Color(isVolcanic ? '#5a5048' : '#c9b882');
-  const rock = new THREE.Color(isVolcanic ? '#3a3530' : '#72726a');
+  const isAutumn = season === 'autumn';
+  const isSummer = season === 'summer';
+  const isSpring = season === 'spring';
+  
+  // Get seasonal colors (or volcanic override)
+  const seasonal = SEASONAL_TERRAIN_COLORS[isVolcanic ? 'winter' : season];
+  const grassA = new THREE.Color(isVolcanic ? '#2a2520' : seasonal.grassA);
+  const grassB = new THREE.Color(isVolcanic ? '#1a1815' : seasonal.grassB);
+  const grassDry = new THREE.Color(isVolcanic ? '#3a3530' : seasonal.grassDry);
+  const dirt = new THREE.Color(isVolcanic ? '#4a4035' : seasonal.dirt);
+  const sand = new THREE.Color(isVolcanic ? '#5a5048' : seasonal.sand);
+  const rock = new THREE.Color(isVolcanic ? '#3a3530' : seasonal.rock);
   const snow = new THREE.Color('#e8eef0');
+  const frozen = new THREE.Color('#c8d8e0'); // Ice/frozen ground color
+  
+  // Snow accumulation factor (0-1) from world state
+  const snowAccum = isWinter ? 0.3 : world.snowAccumulation * 0.7;
+  
   const ox = cx * CHUNK_SIZE + CHUNK_SIZE / 2;
   const oz = cz * CHUNK_SIZE + CHUNK_SIZE / 2;
   for (let i = 0; i < pos.count; i++) {
@@ -37,12 +56,49 @@ function buildTerrainGeometry(cx: number, cz: number, season: Season = 'spring')
     const dry = hash2(Math.floor(x * 0.5), Math.floor(z * 0.5), 19);
     const c = grassA.clone().lerp(grassB, vari);
     c.lerp(grassDry, dry * 0.2);
+    
     // Shore sand (dark ash for volcanic)
     if (y < WATER_LEVEL + 0.6) c.lerp(sand, THREE.MathUtils.clamp((WATER_LEVEL + 0.6 - y) / 0.7, 0, 1));
+    
     // Rock on heights (more prominent in volcanic)
     if (y > 3 || isVolcanic) c.lerp(rock, THREE.MathUtils.clamp((y - 3) / (isVolcanic ? 1.5 : 3), 0, isVolcanic ? 0.9 : 1));
-    // Snow on very high peaks - ONLY in winter
-    if (isWinter && y > 5.5) c.lerp(snow, THREE.MathUtils.clamp((y - 5.5) / 1.5, 0, 1));
+    
+    // Snow on high peaks - more aggressive in winter
+    const snowStart = isWinter ? 3.5 : 5.5;
+    if (isWinter && y > snowStart) {
+      c.lerp(snow, THREE.MathUtils.clamp((y - snowStart) / (isWinter ? 2.5 : 1.5), 0, 1));
+    }
+    
+    // Snow accumulation on ground in winter or after snowfall
+    if (snowAccum > 0 && y > WATER_LEVEL + 1) {
+      const accumNoise = hash2(Math.floor(x), Math.floor(z), 43);
+      // Snow collects in depressions, less on steep areas (simplified)
+      const accumFactor = snowAccum * (0.6 + accumNoise * 0.4);
+      c.lerp(snow, accumFactor * 0.7);
+    }
+    
+    // Winter: frozen ground effect on lower areas
+    if (isWinter && y < 3 && y > WATER_LEVEL) {
+      c.lerp(frozen, 0.25);
+    }
+    
+    // Autumn: more dry grass patches
+    if (isAutumn) {
+      const autumnDry = hash2(Math.floor(x), Math.floor(z), 67);
+      c.lerp(new THREE.Color('#b89840'), autumnDry * 0.4); // Golden-brown patches
+    }
+    
+    // Spring: fresh green boost
+    if (isSpring) {
+      c.lerp(new THREE.Color('#7acf5a'), 0.15); // Brighter green
+    }
+    
+    // Summer: some parched areas
+    if (isSummer) {
+      const parched = hash2(Math.floor(x * 0.3), Math.floor(z * 0.3), 71);
+      c.lerp(new THREE.Color('#9a8a30'), parched * 0.15); // Dry patches
+    }
+    
     // Volcanic: add extra ash/cinder variation
     if (isVolcanic) {
       const ash = hash2(Math.floor(x), Math.floor(z), 31);
@@ -442,23 +498,82 @@ const trunkMat = barkMat('#5a3a22');
 const birchTrunkMat = birchBarkMat('#d8d0c8'); // white bark with dark scars
 const oakTrunkMat = barkMat('#4a3020'); // darker, thicker
 
-// Terrain-aware foliage materials - create once per terrain type
-const FOLIAGE_COLORS = {
-  flat: { conifer: '#2d5a2a', broadleaf: '#5a8a30', birch: '#8ab860', oak: '#4a6a28', maple: '#c87030' },
-  hilly: { conifer: '#265026', broadleaf: '#55852c', birch: '#82b058', oak: '#456225', maple: '#b86828' },
-  mountainous: { conifer: '#1e4520', broadleaf: '#3d6a28', birch: '#6a9a50', oak: '#3a5620', maple: '#a05020' },
-  volcanic: { conifer: '#3a4535', broadleaf: '#4a5040', birch: '#5a5548', oak: '#353830', maple: '#5a4538' },
-  riverlands: { conifer: '#2d5a2a', broadleaf: '#5a8a30', birch: '#8ab860', oak: '#4a6a28', maple: '#c87030' },
+// Seasonal foliage colors - each tree type has variants for each season
+const SEASONAL_FOLIAGE_COLORS: Record<Season, { conifer: string; broadleaf: string; birch: string; oak: string; maple: string }> = {
+  // Spring: bright fresh greens, light birch yellows, fresh oak
+  spring: { conifer: '#2d7a3a', broadleaf: '#6aba40', birch: '#a0d070', oak: '#5a8a38', maple: '#d09040' },
+  // Summer: deep rich greens
+  summer: { conifer: '#1e5a25', broadleaf: '#4a8a28', birch: '#7ab050', oak: '#3d6a28', maple: '#a06020' },
+  // Autumn: warm oranges, reds, golden yellows
+  autumn: { conifer: '#2d5a35', broadleaf: '#8a6a20', birch: '#d8a030', oak: '#8a5a20', maple: '#e85018' },
+  // Winter: muted dark greens, grays (evergreens keep some color)
+  winter: { conifer: '#1e3a25', broadleaf: '#3a4a30', birch: '#5a6a50', oak: '#3a4a35', maple: '#4a4035' },
 };
 
-const colors = FOLIAGE_COLORS[TERRAIN_TYPE] ?? FOLIAGE_COLORS.flat;
+// Terrain modifiers - adjust base colors per terrain type
+const TERRAIN_FOLIAGE_MODIFIERS: Record<string, { conifer: number; broadleaf: number; birch: number; oak: number; maple: number }> = {
+  flat: { conifer: 0, broadleaf: 0, birch: 0, oak: 0, maple: 0 },
+  hilly: { conifer: -0.05, broadleaf: -0.03, birch: -0.05, oak: -0.03, maple: -0.05 },
+  mountainous: { conifer: -0.08, broadleaf: -0.06, birch: -0.08, oak: -0.05, maple: -0.08 },
+  volcanic: { conifer: 0.15, broadleaf: 0.12, birch: 0.15, oak: 0.12, maple: 0.15 }, // Darker/muted
+  riverlands: { conifer: 0, broadleaf: 0.02, birch: 0, oak: 0, maple: 0 },
+};
+
+/** Get foliage colors for current season and terrain */
+function getSeasonalFoliageColors(season: Season = 'spring') {
+  const seasonal = SEASONAL_FOLIAGE_COLORS[season];
+  const mods = TERRAIN_FOLIAGE_MODIFIERS[TERRAIN_TYPE] ?? TERRAIN_FOLIAGE_MODIFIERS.flat;
+  
+  // Helper to darken/lighten color
+  const adjustColor = (hex: string, amount: number) => {
+    const c = new THREE.Color(hex);
+    const hsl = { h: 0, s: 0, l: 0 };
+    c.getHSL(hsl);
+    hsl.l = Math.max(0.05, Math.min(0.95, hsl.l + amount));
+    return '#' + new THREE.Color().setHSL(hsl.h, hsl.s, hsl.l).getHexString();
+  };
+  
+  return {
+    conifer: adjustColor(seasonal.conifer, mods.conifer),
+    broadleaf: adjustColor(seasonal.broadleaf, mods.broadleaf),
+    birch: adjustColor(seasonal.birch, mods.birch),
+    oak: adjustColor(seasonal.oak, mods.oak),
+    maple: adjustColor(seasonal.maple, mods.maple),
+  };
+}
+
+// Create materials with initial colors
+const colors = getSeasonalFoliageColors('spring');
 // Tree canopies use the richer tree-specific shader (subsurface, fresnel,
 // vertex-AO, hue noise). Bushes/grass/ferns/reeds keep the cheaper foliageMat.
-const coniferMat = treeFoliageMat(colors.conifer);
-const broadleafMat = treeFoliageMat(colors.broadleaf);
-const birchMat = treeFoliageMat(colors.birch);
-const oakMat = treeFoliageMat(colors.oak);
-const mapleMat = treeFoliageMat(colors.maple);
+export const coniferMat = treeFoliageMat(colors.conifer);
+export const broadleafMat = treeFoliageMat(colors.broadleaf);
+export const birchMat = treeFoliageMat(colors.birch);
+export const oakMat = treeFoliageMat(colors.oak);
+export const mapleMat = treeFoliageMat(colors.maple);
+
+/** Update foliage materials to match current season - call from WorldTick */
+export function updateFoliageSeason(season: Season) {
+  // Update tree foliage
+  const newColors = getSeasonalFoliageColors(season);
+  coniferMat.color.set(newColors.conifer);
+  broadleafMat.color.set(newColors.broadleaf);
+  birchMat.color.set(newColors.birch);
+  oakMat.color.set(newColors.oak);
+  mapleMat.color.set(newColors.maple);
+  
+  // Update undergrowth (skip for volcanic terrain - keeps dark ash colors)
+  if (TERRAIN_TYPE !== 'volcanic') {
+    const undergrowth = SEASONAL_UNDERGROWTH[season];
+    grassMat.color.set(undergrowth.grassBase);
+    grassMatLight.color.set(undergrowth.grassLight);
+    grassMatDark.color.set(undergrowth.grassDark);
+    grassMatGolden.color.set(undergrowth.grassGolden);
+    bushMat.color.set(undergrowth.bush);
+    berryBushMat.color.set(undergrowth.berry);
+    fernMat.color.set(undergrowth.fern);
+  }
+}
 
 // Decor: boulders / logs / stumps / bushes / grass / reeds / berry bushes
 const boulderGeom = (() => {
@@ -489,23 +604,30 @@ const stumpGeom = (() => {
 const stumpMat = new THREE.MeshStandardMaterial({ color: '#6a4a28', roughness: 1 });
 const stumpTopMat = new THREE.MeshStandardMaterial({ color: '#a08868', roughness: 1 });
 
+// Seasonal undergrowth colors (grass, bushes, ferns)
+const SEASONAL_UNDERGROWTH: Record<Season, { grassBase: string; grassLight: string; grassDark: string; grassGolden: string; bush: string; berry: string; fern: string }> = {
+  spring: { grassBase: '#7abf4a', grassLight: '#9adf70', grassDark: '#5a9f30', grassGolden: '#b0c858', bush: '#4a8a3a', berry: '#5a9a42', fern: '#4a9a50' },
+  summer: { grassBase: '#5a9f30', grassLight: '#7abf50', grassDark: '#3d7f20', grassGolden: '#a0a848', bush: '#2d5a25', berry: '#3d6a32', fern: '#2d6a35' },
+  autumn: { grassBase: '#8a9a3a', grassLight: '#aaba58', grassDark: '#6a7a28', grassGolden: '#c8a030', bush: '#5a4a25', berry: '#6a5a35', fern: '#4a5a30' },
+  winter: { grassBase: '#4a5a40', grassLight: '#5a6a50', grassDark: '#3a4a35', grassGolden: '#5a6a48', bush: '#3a4a35', berry: '#4a5a42', fern: '#3a4a40' },
+};
+
 const bushGeom = new THREE.IcosahedronGeometry(0.55, 1);
-const bushColors = TERRAIN_TYPE === 'volcanic' ? { bush: '#252018', berry: '#201815' } : { bush: '#3a6a2a', berry: '#446a32' };
-const bushMat = foliageMat(bushColors.bush);
-const berryBushMat = foliageMat(bushColors.berry);
+// Initial colors (will be updated by season)
+const initialUndergrowth = SEASONAL_UNDERGROWTH['spring'];
+const bushMat = foliageMat(TERRAIN_TYPE === 'volcanic' ? '#252018' : initialUndergrowth.bush);
+const berryBushMat = foliageMat(TERRAIN_TYPE === 'volcanic' ? '#201815' : initialUndergrowth.berry);
 
 const grassBladeGeom = (() => {
   const g = new THREE.ConeGeometry(0.035, 0.55, 3, 1, true);
   g.translate(0, 0.275, 0);
   return g;
 })();
-const grassColors = TERRAIN_TYPE === 'volcanic' 
-  ? { base: '#3a3028', light: '#4a4035', dark: '#2a2018', golden: '#353028' }
-  : { base: '#6aa240', light: '#8ac460', dark: '#4a8a30', golden: '#a0a040' };
-const grassMat = foliageMat(grassColors.base, { doubleSide: true });
-const grassMatLight = foliageMat(grassColors.light, { doubleSide: true });
-const grassMatDark = foliageMat(grassColors.dark, { doubleSide: true });
-const grassMatGolden = foliageMat(grassColors.golden, { doubleSide: true });
+// Grass materials - exported for seasonal updates
+export const grassMat = foliageMat(TERRAIN_TYPE === 'volcanic' ? '#3a3028' : initialUndergrowth.grassBase, { doubleSide: true });
+export const grassMatLight = foliageMat(TERRAIN_TYPE === 'volcanic' ? '#4a4035' : initialUndergrowth.grassLight, { doubleSide: true });
+export const grassMatDark = foliageMat(TERRAIN_TYPE === 'volcanic' ? '#2a2018' : initialUndergrowth.grassDark, { doubleSide: true });
+export const grassMatGolden = foliageMat(TERRAIN_TYPE === 'volcanic' ? '#353028' : initialUndergrowth.grassGolden, { doubleSide: true });
 
 // ──────────── Ferns ────────────
 // Low spreading fronds for forest floor variety
@@ -521,7 +643,7 @@ const fernGeom = (() => {
   const merged = mergeGeometries([base, frond1, frond2, frond3]);
   return merged ?? base;
 })();
-const fernMat = foliageMat(TERRAIN_TYPE === 'volcanic' ? '#252818' : '#3a7a40', { doubleSide: true });
+export const fernMat = foliageMat(TERRAIN_TYPE === 'volcanic' ? '#252818' : initialUndergrowth.fern, { doubleSide: true });
 
 // ──────────── Wildflowers (decorative carpet) ────────────
 // A single merged geometry: tiny stem + flat petal disc. The whole mesh is
