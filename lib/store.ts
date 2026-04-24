@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Weather } from './world';
+import type { Weather, Season } from './world';
 
 export type PlantKind =
   | 'fern'
@@ -40,7 +40,22 @@ export function plantAvailable(
   weather: Weather,
   postRainSec: number,
   near: boolean,
+  season?: Season,
 ): boolean {
+  // In winter, most plants are dormant or covered in snow
+  if (season === 'winter') {
+    switch (kind) {
+      case 'flower': return false; // Flowers dormant in winter
+      case 'herb': return false; // Herbs dormant in winter
+      case 'berry': return false; // No berries in winter
+      case 'dewcup': return false; // No dew in freezing temps
+      case 'fern': return true; // Ferns persist (brown/covered in snow)
+      case 'mushroom': return hour >= 20 || hour < 6; // Some winter mushrooms
+      case 'moonbloom': return hour >= 21 || hour < 5; // Moonbloom still glows
+      case 'waterlily': return false; // Frozen/water lilies dormant
+    }
+  }
+  
   switch (kind) {
     case 'fern': return true;
     case 'flower': return hour >= 7 && hour < 18 && weather !== 'rain';

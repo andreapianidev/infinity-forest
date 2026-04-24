@@ -1,7 +1,7 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { useGame, PLANT_LABELS, PLANT_HINT, PlantKind } from '@/lib/store';
-import { useHUDWorld, useSettings, requestGeolocation, getLocalSunsetTime, getRealSeason, Season, SeasonMode, TerrainType, getMoonIcon } from '@/lib/world';
+import { useHUDWorld, useSettings, requestGeolocation, getLocalSunsetTime, getLocationInfo, getRealSeason, Season, SeasonMode, TerrainType, getMoonIcon } from '@/lib/world';
 import { WORLD_SEED, rerollWorldSeed } from '@/lib/noise';
 import { useNPC, DevNPC, NPCKind, NPC_PROFILES } from '@/lib/npc';
 
@@ -281,10 +281,15 @@ export function HUD({ locked }: { locked: boolean }) {
             
             {realtimeClock && (() => {
               const sunset = getLocalSunsetTime();
+              const locationDisplay = sunset.locationName 
+                ? `📍 ${sunset.locationName}`
+                : sunset.hasLocation 
+                  ? `📍 ${sunset.lat.toFixed(2)}°, ${sunset.lon.toFixed(2)}°`
+                  : `📍 ${sunset.lat.toFixed(0)}°N Italy (default)`;
               return (
                 <div className="sunset" style={{ fontSize: '0.75em', opacity: 0.8 }}>
-                  Sunset ~{Math.floor(sunset.hour)}:{Math.round((sunset.hour % 1) * 60).toString().padStart(2, '0')}
-                  {sunset.hasLocation ? '📍' : ' (default)'}
+                  <div>Sunset ~{Math.floor(sunset.hour)}:{Math.round((sunset.hour % 1) * 60).toString().padStart(2, '0')}</div>
+                  <div style={{ fontSize: '0.9em', opacity: 0.85, marginTop: '2px' }}>{locationDisplay}</div>
                 </div>
               );
             })()}

@@ -15,7 +15,7 @@ const SEASONAL_TERRAIN_COLORS: Record<Season, { grassA: string; grassB: string; 
   spring: { grassA: '#7acf5a', grassB: '#5abf42', grassDry: '#9ad470', dirt: '#6a5a38', sand: '#d4c890', rock: '#7a7a72' },
   summer: { grassA: '#5a9f30', grassB: '#3a6f20', grassDry: '#a0a840', dirt: '#5a4a28', sand: '#c9b882', rock: '#72726a' },
   autumn: { grassA: '#8a9a3a', grassB: '#6a5a28', grassDry: '#c8a040', dirt: '#5a4a2a', sand: '#c4b078', rock: '#7a726a' },
-  winter: { grassA: '#4a5a40', grassB: '#3a4a35', grassDry: '#5a6a50', dirt: '#4a5045', sand: '#b8c0c0', rock: '#6a7068' },
+  winter: { grassA: '#e8eef0', grassB: '#d0d8e0', grassDry: '#c8d0d8', dirt: '#a8b0b8', sand: '#c0c8d0', rock: '#9aa0a8' },
 };
 
 function buildTerrainGeometry(cx: number, cz: number, season: Season = 'spring'): THREE.BufferGeometry {
@@ -43,7 +43,8 @@ function buildTerrainGeometry(cx: number, cz: number, season: Season = 'spring')
   const frozen = new THREE.Color('#c8d8e0'); // Ice/frozen ground color
   
   // Snow accumulation factor (0-1) from world state
-  const snowAccum = isWinter ? 0.3 : world.snowAccumulation * 0.7;
+  // In winter, ground is mostly covered in snow; snow accumulation adds patches
+  const snowAccum = isWinter ? 0.75 + world.snowAccumulation * 0.25 : world.snowAccumulation * 0.85;
   
   const ox = cx * CHUNK_SIZE + CHUNK_SIZE / 2;
   const oz = cz * CHUNK_SIZE + CHUNK_SIZE / 2;
@@ -70,16 +71,18 @@ function buildTerrainGeometry(cx: number, cz: number, season: Season = 'spring')
     }
     
     // Snow accumulation on ground in winter or after snowfall
-    if (snowAccum > 0 && y > WATER_LEVEL + 1) {
+    if (snowAccum > 0 && y > WATER_LEVEL + 0.5) {
       const accumNoise = hash2(Math.floor(x), Math.floor(z), 43);
-      // Snow collects in depressions, less on steep areas (simplified)
-      const accumFactor = snowAccum * (0.6 + accumNoise * 0.4);
-      c.lerp(snow, accumFactor * 0.7);
+      // Snow collects in depressions, creates patchy white spots
+      // In winter, much more aggressive snow coverage
+      const winterBoost = isWinter ? 0.9 : 0.6;
+      const accumFactor = snowAccum * (winterBoost + accumNoise * (isWinter ? 0.2 : 0.4));
+      c.lerp(snow, accumFactor * (isWinter ? 0.95 : 0.7));
     }
     
-    // Winter: frozen ground effect on lower areas
+      // Winter: frozen ground effect on lower areas
     if (isWinter && y < 3 && y > WATER_LEVEL) {
-      c.lerp(frozen, 0.25);
+      c.lerp(frozen, 0.4);
     }
     
     // Autumn: more dry grass patches
@@ -515,8 +518,8 @@ const SEASONAL_FOLIAGE_COLORS: Record<Season, { conifer: string; broadleaf: stri
   summer: { conifer: '#1e5a25', broadleaf: '#4a8a28', birch: '#7ab050', oak: '#3d6a28', maple: '#a06020' },
   // Autumn: warm oranges, reds, golden yellows - base colors, actual varies per tree
   autumn: { conifer: '#2d5a35', broadleaf: '#8a6a20', birch: '#d8a030', oak: '#8a5a20', maple: '#e85018' },
-  // Winter: muted dark greens, grays (evergreens keep some color)
-  winter: { conifer: '#1e3a25', broadleaf: '#3a4a30', birch: '#5a6a50', oak: '#3a4a35', maple: '#4a4035' },
+  // Winter: snow-covered whites and grays, evergreens dusted with snow
+  winter: { conifer: '#2d4a35', broadleaf: '#c8d0d8', birch: '#d8e0e8', oak: '#b8c0c8', maple: '#a8b0b8' },
 };
 
 /** Get a specific autumn color variation based on tree position */
@@ -625,7 +628,7 @@ const SEASONAL_UNDERGROWTH: Record<Season, { grassBase: string; grassLight: stri
   spring: { grassBase: '#8acf5a', grassLight: '#aef080', grassDark: '#6abf40', grassGolden: '#c0d868', bush: '#5aaa4a', berry: '#6aba52', fern: '#5aba60' },
   summer: { grassBase: '#5a9f30', grassLight: '#7abf50', grassDark: '#3d7f20', grassGolden: '#a0a848', bush: '#2d5a25', berry: '#3d6a32', fern: '#2d6a35' },
   autumn: { grassBase: '#8a9a3a', grassLight: '#aaba58', grassDark: '#6a7a28', grassGolden: '#c8a030', bush: '#5a4a25', berry: '#6a5a35', fern: '#4a5a30' },
-  winter: { grassBase: '#4a5a40', grassLight: '#5a6a50', grassDark: '#3a4a35', grassGolden: '#5a6a48', bush: '#3a4a35', berry: '#4a5a42', fern: '#3a4a40' },
+  winter: { grassBase: '#c8d0d8', grassLight: '#d8e0e8', grassDark: '#b0b8c0', grassGolden: '#a8b0b8', bush: '#b8c0c8', berry: '#c0c8d0', fern: '#a8b0b8' },
 };
 
 const bushGeom = new THREE.IcosahedronGeometry(0.55, 1);
@@ -1597,13 +1600,15 @@ export function Chunk({ cx, cz, playerRef }: { cx: number; cz: number; playerRef
   const grass = useMemo(() => grassPlacements(cx, cz), [cx, cz]);
   const reeds = useMemo(() => reedPlacements(cx, cz), [cx, cz]);
   const isSpring = world.season === 'spring';
-  const wildflowers = useMemo(() => wildflowerPlacements(cx, cz, isSpring), [cx, cz, isSpring]);
-  // New diverse vegetation - more flowers in spring
-  const bellFlowers = useMemo(() => bellFlowerPlacements(cx, cz, isSpring), [cx, cz, isSpring]);
-  const tallFlowers = useMemo(() => tallFlowerPlacements(cx, cz, isSpring), [cx, cz, isSpring]);
-  const lavenders = useMemo(() => lavenderPlacements(cx, cz), [cx, cz]);
-  const clovers = useMemo(() => cloverPlacements(cx, cz), [cx, cz]);
-  const ferns = useMemo(() => fernPlacements(cx, cz), [cx, cz]);
+  const isWinter = world.season === 'winter';
+  // No colorful flowers in winter - they're covered in snow or dormant
+  const wildflowers = useMemo(() => isWinter ? [] : wildflowerPlacements(cx, cz, isSpring), [cx, cz, isSpring, isWinter]);
+  // New diverse vegetation - more flowers in spring, none in winter
+  const bellFlowers = useMemo(() => isWinter ? [] : bellFlowerPlacements(cx, cz, isSpring), [cx, cz, isSpring, isWinter]);
+  const tallFlowers = useMemo(() => isWinter ? [] : tallFlowerPlacements(cx, cz, isSpring), [cx, cz, isSpring, isWinter]);
+  const lavenders = useMemo(() => isWinter ? [] : lavenderPlacements(cx, cz), [cx, cz, isWinter]);
+  const clovers = useMemo(() => isWinter ? [] : cloverPlacements(cx, cz), [cx, cz, isWinter]);
+  const ferns = useMemo(() => isWinter ? [] : fernPlacements(cx, cz), [cx, cz, isWinter]);
   const pebbles = useMemo(() => pebblePlacements(cx, cz), [cx, cz]);
   const fallenLeaves = useMemo(() => fallenLeafPlacements(cx, cz), [cx, cz]);
   const cherryBlossoms = useMemo(() => isSpring ? cherryBlossomPlacements(cx, cz) : [], [cx, cz, isSpring]);
@@ -1771,7 +1776,7 @@ export function Chunk({ cx, cz, playerRef }: { cx: number; cz: number; playerRef
       }
       if (cherryBlossomRef.current.instanceColor) cherryBlossomRef.current.instanceColor.needsUpdate = true;
     }
-  }, [coniferTrees, broadTrees, birchTrees, oakTrees, mapleTrees, bareBoulders, mossyBoulders, logs, stumps, grass, reeds, wildflowers, bellFlowers, tallFlowers, lavenders, clovers, ferns, pebbles, fallenLeaves, cherryBlossoms, isSpring]);
+  }, [coniferTrees, broadTrees, birchTrees, oakTrees, mapleTrees, bareBoulders, mossyBoulders, logs, stumps, grass, reeds, wildflowers, bellFlowers, tallFlowers, lavenders, clovers, ferns, pebbles, fallenLeaves, cherryBlossoms, isSpring, isWinter]);
 
   // Refs for stateless Plant/Bush components — one useFrame drives them all.
   const plantGroupRefs = useRef<(THREE.Group | null)[]>([]);
@@ -1792,7 +1797,7 @@ export function Chunk({ cx, cz, playerRef }: { cx: number; cz: number; playerRef
       const g = plantGroupRefs.current[i];
       if (!g) continue;
       if (collected.has(p.id)) { g.visible = false; continue; }
-      const avail = plantAvailable(p.kind, world.hour, world.weather, world.postRainT, nearWater(p.x, p.z));
+      const avail = plantAvailable(p.kind, world.hour, world.weather, world.postRainT, nearWater(p.x, p.z), world.season);
       g.visible = avail;
       if (!avail) { if (nearbyId === p.id) setNearby(null, null); continue; }
       const dx = pp.x - p.x, dz = pp.z - p.z;
@@ -1807,7 +1812,7 @@ export function Chunk({ cx, cz, playerRef }: { cx: number; cz: number; playerRef
     }
 
     // Bushes — toggle berries and handle proximity.
-    const berriesAvail = plantAvailable('berry', world.hour, world.weather, world.postRainT, false);
+    const berriesAvail = plantAvailable('berry', world.hour, world.weather, world.postRainT, false, world.season);
     for (let i = 0; i < bushes.length; i++) {
       const b = bushes[i];
       const h = bushHandleRefs.current[i];

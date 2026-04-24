@@ -140,7 +140,27 @@ function palAt(hour: number): Palette {
 
 /** User's latitude for location-aware time calculation */
 let userLatitude = 45; // Default to mid-latitude (Northern Italy)
+let userLongitude = 9; // Default longitude (Northern Italy)
 let hasGeolocation = false;
+let userLocationName: string | null = null; // City/region name from reverse geocoding
+
+/** Reverse geocoding using OpenStreetMap Nominatim (free, no API key needed) */
+async function fetchLocationName(lat: number, lon: number): Promise<string | null> {
+  try {
+    const response = await fetch(
+      `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json&zoom=10`,
+      { headers: { 'User-Agent': 'InfiniteForest/1.0' } }
+    );
+    if (!response.ok) return null;
+    const data = await response.json();
+    // Try to get city, town, village, or county name
+    const address = data.address;
+    return address?.city || address?.town || address?.village || address?.county || address?.state || null;
+  } catch (e) {
+    console.log('Reverse geocoding failed:', e);
+    return null;
+  }
+}
 
 /** Try to get user's location for accurate sunset times */
 export function requestGeolocation(): void {
@@ -148,16 +168,39 @@ export function requestGeolocation(): void {
   if (!navigator.geolocation) return;
 
   navigator.geolocation.getCurrentPosition(
-    (pos) => {
+    async (pos) => {
       userLatitude = pos.coords.latitude;
+      userLongitude = pos.coords.longitude;
       hasGeolocation = true;
-      console.log(`Location acquired: lat=${userLatitude.toFixed(2)}, sunset will be location-accurate`);
+      console.log(`Location acquired: lat=${userLatitude.toFixed(2)}, lon=${userLongitude.toFixed(2)}`);
+      
+      // Try to get location name
+      const name = await fetchLocationName(userLatitude, userLongitude);
+      if (name) {
+        userLocationName = name;
+        console.log(`Location name: ${name}`);
+      }
     },
     (err) => {
       console.log('Geolocation denied or failed, using default latitude 45°');
     },
     { timeout: 10000, maximumAge: 300000 }
   );
+}
+
+/** Get current location info for display */
+export function getLocationInfo(): { 
+  lat: number; 
+  lon: number; 
+  hasLocation: boolean; 
+  name: string | null;
+} {
+  return {
+    lat: userLatitude,
+    lon: userLongitude,
+    hasLocation: hasGeolocation,
+    name: userLocationName
+  };
 }
 
 /** Calculate sunset hour (0-23) based on latitude and day of year.
@@ -216,7 +259,13 @@ export function currentLocalHour(): number {
 }
 
 /** Get current sunset time for display (in local time hours) */
-export function getLocalSunsetTime(): { hour: number; hasLocation: boolean } {
+export function getLocalSunsetTime(): { 
+  hour: number; 
+  hasLocation: boolean;
+  locationName: string | null;
+  lat: number;
+  lon: number;
+} {
   const d = new Date();
   const startOfYear = new Date(d.getFullYear(), 0, 0);
   const diff = d.getTime() - startOfYear.getTime();
@@ -224,7 +273,10 @@ export function getLocalSunsetTime(): { hour: number; hasLocation: boolean } {
 
   return {
     hour: calculateSunsetHour(userLatitude, dayOfYear),
-    hasLocation: hasGeolocation
+    hasLocation: hasGeolocation,
+    locationName: userLocationName,
+    lat: userLatitude,
+    lon: userLongitude
   };
 }
 
